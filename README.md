@@ -4,14 +4,14 @@
 
 ## 👥 Thành viên nhóm & Phân công vai trò
 
-**Lớp:** 3A · **Phòng:** ____ · **Cụm:** ____ · **Track:** ____
+**Lớp:** 3A · **Phòng:** E402 · **Cụm:** C4 · **Track:** C3
 
 | Họ và Tên | Mã Học Viên | Vai trò chính | Phần việc đảm nhiệm trong dự án |
 |---|---|---|---|
-|  |  |  |  |
-|  |  |  |  |
-|  |  |  |  |
-|  |  |  |  |
+| Hoàng Quốc Việt | 2A202602563 | Leader | Điền form |
+| Nguyễn Huy Hùng | 2A202602990 | Dev | Hỗ trợ điền form |
+| Lê Đức Tùng |  2A202603005 | Dev | Viết notes |
+| Nguyễn Ngọc Hân | 2A202602511 | PMO | Chia task, track tiến độ thành viên, phỏng vấn |
 
 > Nhóm copy nguyên file README này về repo của mình, rồi điền bảng trên. Cột **Phần việc đảm nhiệm** ghi càng cụ thể càng tốt.
 
