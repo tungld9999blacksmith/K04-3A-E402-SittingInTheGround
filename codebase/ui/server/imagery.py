@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import json
 import re
+import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -80,14 +83,93 @@ def find(query: str, want: int = 1) -> list[dict]:
     return out
 
 
-def download(url: str, out: Path) -> Path | None:
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            out.write_bytes(r.read())
-        return out
-    except Exception:
+# Commons is a donated service and asks to be treated like one: one modest backoff on a
+# "come back later", never a hammering loop.
+RETRY_ON = frozenset({429, 500, 502, 503, 504})
+_last_error: str | None = None
+
+
+def last_error() -> str | None:
+    """Why the most recent download() gave up, or None if it succeeded.
+
+    A caller that only sees None cannot tell "the picture is not there" from "the server
+    refused us", and those two want different words on screen.
+    """
+    return _last_error
+
+
+def _refused(why: str) -> None:
+    """Record a download failure and say it out loud rather than returning a bare None."""
+    global _last_error
+    _last_error = why
+    print("imagery: tải ảnh thất bại — %s" % why, file=sys.stderr)
+
+
+def _host(url: str) -> str:
+    return urllib.parse.urlsplit(url).netloc or "máy chủ ảnh"
+
+
+def download(url: str, out, tries: int = 3) -> Path | None:
+    """Fetch one Commons image to `out`. Returns the path, or None with a stated reason.
+
+    `out` may be a str or a Path. It used to be handed straight to `Path.write_bytes`,
+    so a str caller raised AttributeError, the bare `except Exception` swallowed it, and
+    every hit looked like a picture that would not download — for files upload.wikimedia
+    was serving with a plain 200. A wrong TYPE is the caller's bug, so coercing it here
+    is the whole fix; anything genuinely unusable is now named instead of hidden.
+
+    The descriptive User-Agent goes on the IMAGE request too, not only on api.php:
+    Wikimedia answers a UA-less fetch with 403. 429 and 5xx get a short backoff and are
+    reported as a refusal, which is not the same thing as no picture existing.
+    """
+    global _last_error
+    dest = Path(out)  # deliberately outside the try: a bad type is a bug, not a 404
+    _last_error = None
+    body: bytes | None = None
+    kind = ""
+
+    for attempt in range(1, max(1, tries) + 1):
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": UA,
+                "Accept": "image/*,*/*;q=0.5",
+            })
+            with urllib.request.urlopen(req, timeout=30) as r:
+                kind = (r.headers.get("Content-Type") or "").split(";")[0].strip()
+                body = r.read()
+            break
+        except urllib.error.HTTPError as e:
+            if e.code in RETRY_ON and attempt < tries:
+                wait = float(e.headers.get("Retry-After") or 0) or 1.5 * attempt
+                time.sleep(min(wait, 8.0))
+                continue
+            _refused("%s trả về HTTP %d %s" % (_host(url), e.code, e.reason))
+            return None
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if attempt < tries:
+                time.sleep(1.5 * attempt)
+                continue
+            _refused("không kết nối được %s (%s)" % (_host(url), e))
+            return None
+
+    if body is None:
+        _refused("%s không trả lời sau %d lần thử" % (_host(url), tries))
         return None
+    if not kind.startswith("image/"):
+        # A captcha or an error page written to disk would sail past cover() and land a
+        # wall of HTML-shaped noise behind a caption.
+        _refused("%s trả về %s chứ không phải ảnh" % (_host(url), kind or "không rõ kiểu"))
+        return None
+
+    dest.write_bytes(body)
+    try:
+        with Image.open(dest) as im:
+            im.verify()
+    except Exception as e:
+        dest.unlink(missing_ok=True)
+        _refused("%d byte từ %s không mở được thành ảnh (%s)" % (len(body), _host(url), e))
+        return None
+    return dest
 
 
 def cover(path: Path, size: tuple[int, int]):
