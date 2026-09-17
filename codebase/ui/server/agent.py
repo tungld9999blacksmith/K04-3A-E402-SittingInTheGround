@@ -554,7 +554,7 @@ def main() -> None:
             print(f"Thiếu {name}. Export nó rồi chạy lại.", file=sys.stderr)
             raise SystemExit(2)
     sid = next_id("s", 3)
-    SESSIONS[sid] = Session(sid, "Phiên mẫu, chưa có đề bài")
+    SESSIONS[sid] = Session(sid, "Kịch bản mới, chưa có đề bài")
     print(f"ScriptScout backend: http://127.0.0.1:{PORT}  model={MODEL}")
     print(f"Mở giao diện: http://127.0.0.1:8000/?api=http://127.0.0.1:{PORT}")
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

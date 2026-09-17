@@ -76,6 +76,14 @@
         topic: text.trim().slice(0, 120), goal: "", learners: "", duration: "",
         targetSeconds: (st.meta && st.meta.target) || 30, raw: text.trim()
       } });
+      /* The session was named before anyone said what it was about. Now we know. */
+      var m0 = S.get().meta;
+      if (m0) {
+        var named = Object.assign({}, m0, { title: text.trim().slice(0, 90), state: "tim" });
+        S.set({ meta: named, sessions: S.get().sessions.map(function (x) {
+          return x.id === named.id ? named : x;
+        }) });
+      }
       st = S.get();
     } else {
       st.answers.push(text.trim());
