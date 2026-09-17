@@ -24,8 +24,7 @@ UA = "ScriptScout/0.1 (VinUni course project; contact via repo)"
 # not a background: a survey bar chart once landed under a Kubernetes card and both
 # layers of type fought. Photographs and scenes only.
 BAD = re.compile(r"(logo|icon|flag|coat[_ ]of[_ ]arms|signature|barnstar|\.svg$"
-                 r"|chart|graph|plot|survey|statistic|histogram|infographic"
-                 r"|screenshot|slide|diagram|table|timeline|poster|results?\b)", re.I)
+                 r"|chart|graph|plot|survey|statistic|histogram|infographic)", re.I)
 
 
 def _get(params: dict) -> dict:
@@ -121,3 +120,19 @@ def is_flat_document(path) -> bool:
     pale = sum(1 for r, g, b in px if min(r, g, b) > 228) / len(px)
     grey = sum(1 for r, g, b in px if max(r, g, b) - min(r, g, b) < 18) / len(px)
     return pale > 0.30 and grey > 0.60
+
+def treat(img, blur: float = 1.6, tint=(10, 59, 117), strength: float = 0.34):
+    """Make a photograph behave as a background instead of competing as a picture.
+
+    A sharp, full-colour photograph behind a sentence pulls the eye off the words, and
+    eight unrelated photographs make a deck look like a stock-image catalogue. A light
+    blur and a pull toward the brand navy keeps every card recognisably the same film,
+    and gives the scrim less work to do.
+    """
+    from PIL import ImageEnhance, ImageFilter
+    out = img.convert("RGB")
+    if blur > 0:
+        out = out.filter(ImageFilter.GaussianBlur(blur))
+    out = ImageEnhance.Color(out).enhance(0.72)
+    wash = Image.new("RGB", out.size, tuple(tint))
+    return Image.blend(out, wash, max(0.0, min(0.85, strength)))

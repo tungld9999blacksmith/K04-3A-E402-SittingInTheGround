@@ -89,3 +89,15 @@ def concat(clips, out) -> None:
         "".join("file '%s'\n" % p.resolve().as_posix() for p in paths), encoding="utf-8")
     _must(["-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(listing),
            "-c", "copy", "-movflags", "+faststart", str(out)], "ghép clip")
+
+def silence(seconds: float, out) -> None:
+    """An audio track for a card with nothing to say.
+
+    A transition card can carry no spoken line, and the voice service refuses text that
+    is only punctuation with "No audio was received" — which used to end the whole render
+    on sentence two. A silent track of the right length keeps the card in the film.
+    """
+    _must(["-y", "-v", "error", "-f", "lavfi", "-i",
+           "anullsrc=channel_layout=stereo:sample_rate=24000",
+           "-t", "%.3f" % max(0.8, float(seconds)), "-c:a", "libmp3lame", str(out)],
+          "tao doan lang")

@@ -115,6 +115,33 @@ def sources_for(row: dict, claims: dict) -> list[str]:
 
 # ---------------------------------------------------------------- pictures
 
+def visual_terms(topic: str, sections: list[dict], judge) -> dict:
+    """Concrete English things to photograph, per section.
+
+    Searching Wikimedia Commons for a Vietnamese section name returns nothing at all,
+    which is why eight sections in a row fell back to a drawn card. Commons is an
+    English-language archive of photographs of real things, so it has to be asked for a
+    real thing: "data center server room" finds CERN's machine hall, where "Cụm và node"
+    finds silence.
+    """
+    if judge is None:
+        return {}
+    try:
+        out = judge(
+            "Bài giảng về %r, gồm các phần: %s.\n"
+            "Với MỖI phần, cho hai từ khoá TIẾNG ANH để tìm ẢNH CHỤP trên Wikimedia "
+            "Commons. Phải là VẬT THỂ CÓ THỂ CHỤP ĐƯỢC, cụ thể, ví dụ "
+            "'data center server room', 'fibre optic cable', 'university lecture hall'. "
+            "KHÔNG dùng từ trừu tượng, không dùng tên khái niệm, không dùng biểu đồ."
+            % (topic, ", ".join("%s:%s" % (x.get("no"), x.get("name") or "") for x in sections)),
+            '{"terms": [{"sec": 1, "words": ["...", "..."]}]}',
+        )
+        return {int(r["sec"]): [w for w in (r.get("words") or []) if w][:2]
+                for r in (out.get("terms") or []) if r.get("sec") is not None}
+    except Exception:
+        return {}
+
+
 def choose_images(topic: str, sections: list[dict], work: Path, judge=None,
                   say=None) -> dict:
     """One vetted picture per section, or none for that section.
@@ -125,12 +152,18 @@ def choose_images(topic: str, sections: list[dict], work: Path, judge=None,
     better answer than a decorative wrong picture more often than not.
     """
     picked: dict = {}
+    terms = visual_terms(topic, sections, judge)
     for sec in sections:
         no = sec.get("no")
-        query = ("%s %s" % (topic, sec.get("name") or "")).strip()
-        hits = imagery.find(query, want=5)
-        if not hits and query != topic:      # an empty section name makes these identical
-            hits = imagery.find(topic, want=5)
+        hits = []
+        seen_titles = set()
+        for query in (terms.get(no) or []) + [topic]:
+            for h in imagery.find(query, want=4) or []:
+                if h["title"] not in seen_titles:
+                    seen_titles.add(h["title"])
+                    hits.append(h)
+            if len(hits) >= 6:
+                break
         if not hits:
             continue
 
@@ -170,7 +203,7 @@ def choose_images(topic: str, sections: list[dict], work: Path, judge=None,
                         % (no, cand["title"][:38]))
                 continue
             try:
-                picked[no] = dict(cand, image=imagery.cover(raw, (W, H)))
+                picked[no] = dict(cand, image=imagery.treat(imagery.cover(raw, (W, H))))
             except Exception:
                 continue
             if say:
@@ -190,9 +223,30 @@ async def _speak(text: str, voice: str, out: Path) -> None:
     await edge_tts.Communicate(text, voice).save(str(out))
 
 
-def speak(text: str, voice: str, out: Path) -> None:
+WORDISH = re.compile(r"[0-9A-Za-zÀ-ỹ]")
+
+
+def speak(text: str, voice: str, out: Path, seconds: float = 2.5) -> None:
+    """Narrate the line, or lay down silence rather than bring the render down.
+
+    Two things went wrong here in one run. A card with no spoken line fell back to "…",
+    and the voice service answers punctuation with "No audio was received" — the render
+    died on sentence two of thirty. And a network hiccup on any one line should cost that
+    line its narration, not the whole film.
+    """
     clean = re.sub(r"\s+", " ", (text or "").strip())
-    asyncio.run(_speak(clean or "…", voice, out))
+    if not WORDISH.search(clean):
+        motion.silence(seconds, out)
+        return
+    try:
+        asyncio.run(_speak(clean, voice, out))
+        if Path(out).stat().st_size > 800:
+            return
+    except Exception:
+        pass
+    # Vietnamese runs about 2.9 syllables a second, which is close enough to word count
+    # for a placeholder length.
+    motion.silence(max(1.5, len(clean.split()) / 2.4), out)
 
 
 # ---------------------------------------------------------------- the whole thing
@@ -256,7 +310,7 @@ def render(script: dict, claims: dict, sources: dict, brief: dict, outdir: Path,
                    footer_left=("Nguồn: " + ", ".join(seen[:3])) if seen
                                else "Câu chuyển, không cần nguồn",
                    footer_right="%d / %d" % (i, len(rows))).save(png)
-        speak(row.get("loi") or "", voice_id, aud)
+        speak(row.get("loi") or "", voice_id, aud, seconds=float(row.get("dur") or 2.5))
         motion.ken_burns(str(png), str(aud), str(clip), zoom_in=(i % 2 == 1))
         parts.append(clip)
         say("ok", "Câu %d trên %d: có tiếng, hình và chuyển động" % (i, len(rows)))
