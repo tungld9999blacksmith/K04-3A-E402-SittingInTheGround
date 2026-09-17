@@ -134,9 +134,9 @@ def score_source(item: dict[str, Any]) -> Source:
 
 
 class GeminiProvider:
-    def __init__(self, api_key: str | None = None, model: str = "gemini-2.0-flash") -> None:
+    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model = model
+        self.model = model or os.getenv("GEMINI_MODEL") or "gemini-3.5-flash-lite"
 
     def generate(self, prompt: str) -> str:
         if not self.api_key:
