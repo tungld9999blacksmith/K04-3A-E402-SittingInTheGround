@@ -1,4 +1,4 @@
-# AI SPEC — Agent tự tìm tài liệu và viết kịch bản video có dẫn nguồn · Nhóm Sitting on the Ground · Zone C4
+<img width="1906" height="2560" alt="image" src="https://github.com/user-attachments/assets/b0e3b1ec-a22e-4664-a09b-63a9a7ddcb1d" /># AI SPEC — Agent tự tìm tài liệu và viết kịch bản video có dẫn nguồn · Nhóm Sitting on the Ground · Zone C4
 Hướng: [ ] A — VLearn  [ ] B — Trợ lý Học viên  [X] C — Làn mở
 Loại: [X] Tối ưu tính năng có sẵn  [X] Tính năng mới
 
@@ -8,7 +8,13 @@ Loại: [X] Tối ưu tính năng có sẵn  [X] Tính năng mới
 
 - **Job executor + workflow:**  
   Người viết kịch bản/giảng viên:
-![Uploading image.png…]()
+  1. Xác định chủ đề, mục tiêu bài học, đối tượng người học và thời lượng video.
+  2. Tự tìm tài liệu trên web.
+  3. Đọc và đánh giá độ tin cậy, độ mới của từng nguồn.
+  4. Tổng hợp thông tin thành kịch bản.
+  5. Gửi giảng viên/người duyệt kiểm tra.
+  6. Khi có nguồn bị loại hoặc thông tin bị sửa, tìm lại bằng chứng và chỉnh phần kịch bản liên quan.
+  7. Xuất kịch bản và hồ sơ nguồn.
 
 - **Core JTBD:**  
   > Khi chuẩn bị một video bài giảng, tôi muốn nhanh chóng tìm và kiểm chứng các tài liệu liên quan rồi chuyển chúng thành một kịch bản nói tự nhiên, để tôi có thể duyệt nội dung và truy ngược từng thông tin quan trọng về bằng chứng gốc trước khi quay.
