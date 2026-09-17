@@ -15,7 +15,8 @@ Loại: [X] Tối ưu tính năng có sẵn  [X] Tính năng mới
   5. Gửi giảng viên/người duyệt kiểm tra.
   6. Khi có nguồn bị loại hoặc thông tin bị sửa, tìm lại bằng chứng và chỉnh phần kịch bản liên quan.
   7. Xuất kịch bản và hồ sơ nguồn.
-<img width="190" height="250" alt="image" src="https://github.com/user-attachments/assets/b0e3b1ec-a22e-4664-a09b-63a9a7ddcb1d" /># AI 
+
+<img width="1900" height="2500" alt="image" src="https://github.com/user-attachments/assets/b0e3b1ec-a22e-4664-a09b-63a9a7ddcb1d" />
 - **Core JTBD:**  
   > Khi chuẩn bị một video bài giảng, tôi muốn nhanh chóng tìm và kiểm chứng các tài liệu liên quan rồi chuyển chúng thành một kịch bản nói tự nhiên, để tôi có thể duyệt nội dung và truy ngược từng thông tin quan trọng về bằng chứng gốc trước khi quay.
 
