@@ -1,0 +1,1 @@
+"""ScriptScout prototype package."""
