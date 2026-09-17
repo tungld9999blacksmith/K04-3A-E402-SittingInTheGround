@@ -571,6 +571,14 @@ def do_research(body: dict) -> dict:
 
 
 CALL_BUDGET = 22          # hard ceiling per write, so a bad run ends instead of grinding
+# Twenty-two calls cannot write a quarter of an hour. The ceiling has to follow the length
+# the person asked for, or the run stops early and reports a script a third of the target
+# as though that were the finished job.
+RUN_BUDGET = {"n": CALL_BUDGET}
+
+
+def budget_for(target: float) -> int:
+    return int(max(22, min(140, 16 + target / 14)))
 SECTION_SECONDS = 90      # one section is about this long before it wants splitting
 
 
@@ -637,7 +645,7 @@ RULES = (
 
 
 def plan_sections(brief, target, claims, calls):
-    want = max(1, min(8, round(target / SECTION_SECONDS) or 1))
+    want = max(1, min(24, round(target / SECTION_SECONDS) or 1))
     calls.append(1)
     out = gemini(
         "Chu de: %r.%s\n" % (brief.get("topic") or brief.get("raw"),
@@ -661,15 +669,26 @@ def plan_sections(brief, target, claims, calls):
     return sections
 
 
-def write_section(brief, section, claims, calls):
+def write_section(brief, section, claims, calls, seconds=None, avoid=None):
+    """One batch of sentences for a section, written not to repeat what is already there.
+
+    Asking for nineteen sentences in one call reliably returns six, and nothing noticed
+    the shortfall. So the work is requested in batches small enough to be delivered, and
+    the caller comes back for more until the section's clock is filled.
+    """
     calls.append(1)
+    secs = float(section["seconds"] if seconds is None else seconds)
+    want = max(1, min(8, round(secs / 6) or 1))
+    said = ""
+    if avoid:
+        said = ("\n\nDa viet roi. KHONG lap lai y hay cau nao trong so nay, viet PHAN TIEP:\n"
+                + "\n".join("- " + a for a in avoid[-20:]))
     out = gemini(
         "Viet phan %d ten %r cua mot kich ban video bai giang tieng Viet ve %r.%s\n"
         % (section["no"], section["name"], brief.get("topic") or brief.get("raw"),
            audience_clause(brief, ascii_only=True))
-        + "Phan nay dai khoang %d giay, nghia la khoang %d cau.\n\n"
-        % (round(section["seconds"]), max(1, round(section["seconds"] / 6)))
-        + RULES + "\n\nDu kien dung duoc:\n" + _claim_list(claims),
+        + "Lan nay viet DUNG khoang %d cau, tuong ung khoang %d giay.\n\n" % (want, round(secs))
+        + RULES + said + "\n\nDu kien dung duoc:\n" + _claim_list(claims),
         '{"sentences": [{"kieu": "giang", "loi": "...", "chu": "...", "hinh": "...", "cls": ["tXX"]}]}',
     )
     return _clean(out.get("sentences"), claims, section["no"], [section])
@@ -706,7 +725,7 @@ def topup_claims(brief, sections, claims, calls, rounds=3):
     topic = brief.get("topic") or brief.get("raw") or LAST.get("topic") or ""
 
     for sec in sections[:rounds]:
-        if len(calls) >= CALL_BUDGET:
+        if len(calls) >= RUN_BUDGET["n"]:
             emit("caution", "H\u1ebft h\u1ea1n m\u1ee9c l\u01b0\u1ee3t g\u1ecdi, d\u1ee9ng t\u00ecm th\u00eam")
             break
         query = "%s %s" % (topic, sec["name"])
@@ -794,7 +813,7 @@ def topup_claims(brief, sections, claims, calls, rounds=3):
 
         # Score what we just took claims from. Leaving a top-up source at a flat middle
         # while first-pass sources carry real scores makes the dossier inconsistent.
-        if kept and len(calls) < CALL_BUDGET:
+        if kept and len(calls) < RUN_BUDGET["n"]:
             calls.append(1)
             try:
                 marks = gemini(
@@ -919,12 +938,14 @@ def do_write(body):
              % (len(usable), round(target), need))
 
     calls = []
+    RUN_BUDGET["n"] = budget_for(target)
     sections = plan_sections(brief, target, usable, calls)
     emit("ok", "Chia %d gi\u00e2y th\u00e0nh %d ph\u1ea7n" % (round(target), len(sections)))
 
     # Short of claims for the length asked for: go back out rather than pad.
     if len(usable) < need:
-        extra_sources, extra_claims = topup_claims(brief, sections, usable, calls)
+        extra_sources, extra_claims = topup_claims(
+            brief, sections, usable, calls, rounds=min(10, max(3, len(sections))))
         usable.update({cid: c for cid, c in extra_claims.items()
                        if not (c["kind"] == "S\u1ed1 li\u1ec7u" and c["state"] == "chuaxacminh")})
         claims = {**claims, **extra_claims}
@@ -932,13 +953,13 @@ def do_write(body):
 
     sentences = []
     for sec in sections:
-        if len(calls) >= CALL_BUDGET:
+        if len(calls) >= RUN_BUDGET["n"]:
             emit("caution", "H\u1ebft h\u1ea1n m\u1ee9c l\u01b0\u1ee3t g\u1ecdi, dừng \u1edf ph\u1ea7n \u0111ang c\u00f3")
             break
         rows = write_section(brief, sec, usable, calls)
         # Judge the part on its own first: cheaper to fix five sentences than forty.
         local = validate.check_script(_renumber(list(rows)), sections, claims, 0)
-        if local and len(calls) < CALL_BUDGET:
+        if local and len(calls) < RUN_BUDGET["n"]:
             emit("caution", "Ph\u1ea7n %d: %d l\u1ed7i, \u0111ang s\u1eeda" % (sec["no"], len(local)))
             rows = revise(_renumber(list(rows)), local, usable, calls, sections)
         sentences.extend(rows)
@@ -947,13 +968,64 @@ def do_write(body):
 
     _renumber(sentences)
 
+    # Reaching the length that was asked for is the job, not a nice-to-have. The first
+    # pass routinely comes back at a fraction of the target, and until now nothing did
+    # anything about it: the judge could only rewrite what was there, never extend it,
+    # so a fifteen-minute request reported two and a half minutes as finished work.
+    #
+    # So keep going, section by section, always topping up the one furthest behind its
+    # own clock, until the total is within reach or the budget runs out. Each round is
+    # shown, because a loop that grinds silently is indistinguishable from a hang.
+    def sec_written(no):
+        return sum(x["dur"] for x in sentences if x.get("sec") == no)
+
+    rounds = 0
+    while (sum(x["dur"] for x in sentences) < target * 0.9
+           and len(calls) < RUN_BUDGET["n"] - 3 and rounds < 30):
+        rounds += 1
+        gaps = {sec["no"]: sec["seconds"] - sec_written(sec["no"]) for sec in sections}
+        no = max(gaps, key=gaps.get)
+        if gaps[no] < 8:
+            # Every section has met its own clock and the total is still short, which
+            # means the plan under-allocated. Spread the remainder round-robin.
+            no = sections[(rounds - 1) % len(sections)]["no"]
+        sec = next(x for x in sections if x["no"] == no)
+
+        # More sentences need more claims, or one claim ends up carrying the script.
+        if len(usable) < validate.claim_budget(target) and rounds % 4 == 1                 and len(calls) < RUN_BUDGET["n"] - 6:
+            more_src, more_cl = topup_claims(brief, [sec], usable, calls, rounds=2)
+            extra_sources.update(more_src)
+            extra_claims.update(more_cl)
+            usable.update({cid: c for cid, c in more_cl.items()
+                           if not (c["kind"] == "Số liệu" and c["state"] == "chuaxacminh")})
+            claims = {**claims, **more_cl}
+
+        rows = write_section(brief, sec, usable, calls,
+                             seconds=max(12.0, min(48.0, gaps[no] if gaps[no] > 8 else 30.0)),
+                             avoid=[x["loi"] for x in sentences if x.get("sec") == no])
+        if not rows:
+            emit("caution", "Phần %d không viết thêm được, dừng kéo dài" % no)
+            break
+        sentences.extend(rows)
+        sentences.sort(key=lambda x: x.get("sec") or 0)
+        _renumber(sentences)
+        emit("ok", "Thêm %d câu vào phần %d, tổng %s giây trên mục tiêu %d"
+             % (len(rows), no, round(sum(x["dur"] for x in sentences), 1), round(target)))
+
+    reached = round(sum(x["dur"] for x in sentences), 1)
+    if reached < target * 0.9:
+        emit("caution", "Dừng ở %s giây trên mục tiêu %d sau %d lượt kéo dài: %s"
+             % (reached, round(target), rounds,
+                "hết hạn mức lượt gọi" if len(calls) >= RUN_BUDGET["n"] - 3
+                else "không còn dữ kiện kiểm được để viết thêm"))
+
     # Now judge the whole thing, including the length it was actually asked for.
     passes = 0
     problems = (validate.check_script(sentences, sections, claims, target)
                 + validate.uncited_assertions(sentences)
                 + validate.overused_claims(sentences, len(usable))
                 + validate.narrated_sourcing(sentences))
-    while problems and passes < 3 and len(calls) < CALL_BUDGET:
+    while problems and passes < 3 and len(calls) < RUN_BUDGET["n"]:
         passes += 1
         emit("caution", "T\u1ef1 ki\u1ec3m l\u01b0\u1ee3t %d: %d l\u1ed7i, vi\u1ebft l\u1ea1i" % (passes, len(problems)))
         sentences = revise(sentences, problems, usable, calls, sections)
