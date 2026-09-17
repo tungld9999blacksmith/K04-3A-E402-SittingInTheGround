@@ -134,7 +134,7 @@ def score_source(item: dict[str, Any]) -> Source:
 
 
 class GeminiProvider:
-    def __init__(self, api_key: str | None = None, model: str = "gemini-2.0-flash") -> None:
+    def __init__(self, api_key: str | None = None, model: str = "gemini-3.1-flash-lite") -> None:
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.model = model
 
@@ -283,7 +283,9 @@ def generate_script(
 
 
 def research_sources(brief: LessonBrief, search_provider: SearchProvider) -> list[Source]:
-    query = f"giáo dục {brief.topic}: {brief.learning_goal}"
+    # The topic leads the query. Folding the learning goal in lets a sentence about one
+    # subject outweigh the subject itself, which is how "Kubernetes" returned ChatGPT pages.
+    query = f"{brief.topic} tài liệu giảng dạy giải thích cho {brief.learner or 'người mới'}"
     results = search_provider.search(query, max_results=5)
     sources = [score_source(item) for item in results]
     LOGGER.info("sources_found=%s", [source.id for source in sources])

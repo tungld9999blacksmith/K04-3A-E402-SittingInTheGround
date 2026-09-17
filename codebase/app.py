@@ -24,13 +24,15 @@ st.set_page_config(page_title="ScriptScout CP3", page_icon="🎬", layout="wide"
 st.title("ScriptScout — CP3 prototype")
 st.caption("AI tìm nguồn và viết bản nháp kịch bản; human duyệt nguồn trước khi sinh nội dung.")
 
-with st.form("brief"):
-    topic = st.text_input("Chủ đề", value="Prompt engineering cơ bản")
+with st.form("brief_form"):  # key must not collide with st.session_state["brief"]
+    # No prefilled values: a leftover default leaks into the search query and drowns the
+    # real topic. Placeholders show the shape without becoming data.
+    topic = st.text_input("Chủ đề", placeholder="Ví dụ: Kubernetes cho người mới")
     learning_goal = st.text_area(
         "Mục tiêu bài học",
-        value="Người học giải thích được prompt và viết được một prompt đơn giản.",
+        placeholder="Sau video người học làm được gì",
     )
-    learner = st.text_input("Người học là ai", value="Sinh viên mới học AI")
+    learner = st.text_input("Người học là ai", placeholder="Ví dụ: sinh viên năm nhất, chưa biết gì")
     duration = st.number_input("Thời lượng video (phút)", min_value=0.5, max_value=120.0, value=2.0)
     use_fixture = st.checkbox(
         "Dùng fixture để demo/eval tái lập (bỏ chọn để dùng Tavily + Gemini thật)",
