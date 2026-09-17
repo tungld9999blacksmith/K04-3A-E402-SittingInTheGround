@@ -94,50 +94,6 @@ Nhóm chọn C3 vì:
 
 ### Lát cắt MỘT CÂU: Agent tìm kiếm và hỗ trợ soạn kịch bản cho video giảng dạy
 
-Human nhập:
-- Chủ đề
-- Mục tiêu bài học
-- Người học
-- Thời lượng
-
-        ↓
-
-Agent kiểm tra input
-
-        ↓
-
-Agent tìm nguồn bằng Tavily
-
-        ↓
-
-Agent đánh giá nguồn
-
-        ↓
-
-Human Gate 1:
-Approve / Reject nguồn
-
-        ↓
-
-Gemini viết bản nháp kịch bản
-
-        ↓
-
-Agent gắn source ID và evidence
-
-        ↓
-
-Human Gate 2:
-Review từng câu và citation
-
-        ↓
-
-Human xác nhận bản nháp
-
-        ↓
-
-Export JSON/Markdown
-
 ### Non-goals
 1. Dựng video hoàn chỉnh.
 2. Tự động xuất bản nội dung mà không có human review.
