@@ -5,9 +5,24 @@ có thông tin đều truy được về đoạn tài liệu chứng minh cho n�
 
 Đề C3 của Mini Hackathon AI, Batch 04, lớp 3A.
 
+## Chạy cả agent thật
+
+Hai tiến trình. Backend cần `GEMINI_API_KEY` và `TAVILY_API_KEY` trong biến môi trường
+(không có bước đọc tệp `.env`).
+
+```bash
+python server/agent.py        # agent, cổng 8787
+python -m http.server 8000    # giao diện
+```
+
+Mở `http://localhost:8000` — giao diện tự tìm backend ở cổng 8787, không cần thêm gì vào
+địa chỉ. Góc trên phải cho biết đang nối vào cái gì. Không có backend thì mọi lời gọi tự
+lùi về dữ liệu mẫu, từng lời gọi một.
+
 **Người làm backend đọc [docs/BACKEND.md](docs/BACKEND.md) trước.** Đó là bản mô tả sản phẩm phải
 làm được gì: mười việc backend phải làm, cách chấm tín cậy, cách tự kiểm dẫn nguồn, và mười một
-điều giao diện đang tin là đúng. `docs/ADAPTER.md` chỉ là bảng endpoint.
+điều giao diện đang tin là đúng. `docs/ADAPTER.md` chỉ là bảng endpoint, và
+[docs/LOOP.md](docs/LOOP.md) nói vòng tự kiểm đã dựng chạy thế nào.
 
 ## Chạy
 
@@ -31,6 +46,9 @@ node build-artifact.mjs     # dựng bản đem publish
 | `src/fixture.js` | Dữ liệu mẫu, lấy từ gói của ban tổ chức |
 | `fixtures/check.mjs` | Bộ kiểm 13 luật, cũng là cổng gác cho mọi sửa đổi |
 | `docs/BACKEND.md` | **Sản phẩm phải làm được gì.** Viết cho người làm backend |
+| `docs/LOOP.md` | Vòng tự kiểm: quan toà máy, viết theo phần, viết lại đúng chỗ |
+| `server/agent.py` | Agent thật: Tavily tìm, Gemini quyết |
+| `server/validate.py` | Quan toà máy, mười bảy luật |
 | `docs/` | Cách chạy, bảng endpoint, hệ thống thiết kế |
 | `qa/` | Ảnh chụp màn hình của các lượt chạy thật |
 

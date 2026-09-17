@@ -46,6 +46,7 @@ window.Store = (function () {
     hover: null,               /* sentence n, set by pointer */
     inspect: "evidence",       /* evidence | dossier */
     cost: 0,
+    usage: null,               /* tokens and searches a real run actually spent */
     error: null,
     seq: 0
   };
@@ -225,6 +226,7 @@ window.Store = (function () {
     state.hover = null;
     state.inspect = "evidence";
     state.cost = 0;
+    state.usage = null;
     state.phase = "clarify";
     undoStack.length = 0;
   }

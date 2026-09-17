@@ -32,6 +32,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import validate                       # the mechanical judge, see server/validate.py
 
 PORT = int(os.getenv("PORT", "8787"))
+# Set GEMINI_USD_PER_MTOK to report money. Left unset, the run reports tokens and
+# searches, which is what it actually measured. A made-up dollar figure is worse than none.
+USD_PER_MTOK = float(os.getenv("GEMINI_USD_PER_MTOK", "0") or 0)
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
 CRITERIA = [
@@ -43,6 +46,26 @@ CRITERIA = [
     {"id": "record", "label": "Có bề dày về đúng chủ đề", "weight": 2},
 ]
 WEIGHTS = {c["id"]: c["weight"] for c in CRITERIA}
+# What each criterion means. Without this the model scored kubernetes.io/docs at one point
+# out of eight: no byline, no printed date, and no credit for being the thing it documents.
+# The rule against domain whitelisting stays; these judge the page itself.
+CRITERIA_GUIDE = (
+    "author: trang ghi rõ ai viết, hoặc tổ chức nào chịu trách nhiệm biên tập. Tài liệu "
+    "chính thức của một dự án hay cơ quan tính là có, vì nó nêu rõ đơn vị chịu trách nhiệm.\n"
+    "date: có ngày đăng hoặc ngày cập nhật đọc được. Không có thì 0, KHÔNG suy đoán.\n"
+    "fresh: nội dung còn đúng với chủ đề vào lúc này. Khái niệm ổn định thì bản cũ vẫn còn "
+    "mới; chủ đề thay đổi nhanh thì bài cũ là không mới. Tài liệu do chính dự án duy trì "
+    "liên tục tính là còn mới dù không in ngày.\n"
+    "cites: bài tự dẫn nguồn, dẫn tiêu chuẩn, dẫn tài liệu khác, hoặc chính nó là tài liệu "
+    "gốc mà người khác dẫn về.\n"
+    "primary: là nơi phát ra thông tin, không phải bài thuật lại. Tài liệu của chính dự án, "
+    "bài báo khoa học gốc, văn bản của cơ quan ban hành đều tính là có.\n"
+    "record: có bề dày chứng minh được về ĐÚNG chủ đề này. Tài liệu chính thức của dự án "
+    "đang nói tới, tạp chí chuyên ngành, cơ quan tiêu chuẩn, hoặc trang có hẳn một mục sâu "
+    "về chủ đề đều tính là có. Một bài lẻ trên trang tổng hợp thì không.\n"
+    "Vẫn cấm cho điểm chỉ vì đuôi tên miền. Chấm theo những gì trang thể hiện."
+)
+
 SYLLABLES_PER_SECOND = 2.9
 
 # Two-part suffixes we must not mistake for a registrable domain.
@@ -56,6 +79,19 @@ INJECTION_MARKERS = (
 
 
 # ---------------------------------------------------------------- outside services
+
+USAGE = {"tokens": 0, "calls": 0, "searches": 0}
+
+
+def reset_usage() -> None:
+    USAGE.update({"tokens": 0, "calls": 0, "searches": 0})
+
+
+def usage_report() -> dict:
+    out = dict(USAGE)
+    out["cost"] = round(USAGE["tokens"] / 1e6 * USD_PER_MTOK, 4) if USD_PER_MTOK else None
+    return out
+
 
 def gemini(prompt: str, schema_hint: str) -> dict:
     """One call, JSON back. Asking for a JSON mime type beats scraping code fences."""
@@ -72,6 +108,10 @@ def gemini(prompt: str, schema_hint: str) -> dict:
         contents=full,
         config=types.GenerateContentConfig(response_mime_type="application/json"),
     )
+    USAGE["calls"] += 1
+    meta = getattr(r, "usage_metadata", None)
+    if meta is not None:
+        USAGE["tokens"] += int(getattr(meta, "total_token_count", 0) or 0)
     text = (r.text or "").strip()
     try:
         return json.loads(text)
@@ -88,11 +128,31 @@ def tavily(query: str, k: int = 5) -> list[dict]:
     key = os.getenv("TAVILY_API_KEY")
     if not key:
         raise RuntimeError("Thiếu TAVILY_API_KEY.")
+    USAGE["searches"] += 1
     r = TavilyClient(api_key=key).search(query, max_results=k, include_raw_content=False)
     return r.get("results", [])
 
 
 # ---------------------------------------------------------------- small helpers
+
+def tavily_extract(url: str) -> dict | None:
+    """Fetch one page by address. Searching for a URL string returns whatever the index
+    thinks is relevant, which once handed back a press release for a kubernetes.io link.
+    A source the reviewer named must be that source or an honest failure."""
+    from tavily import TavilyClient
+
+    key = os.getenv("TAVILY_API_KEY")
+    if not key:
+        raise RuntimeError("Thiếu TAVILY_API_KEY.")
+    USAGE["searches"] += 1
+    r = TavilyClient(api_key=key).extract(urls=[url])
+    for row in (r.get("results") or []):
+        text = row.get("raw_content") or row.get("content") or ""
+        if text.strip():
+            return {"url": row.get("url") or url, "content": text,
+                    "title": row.get("title") or "", "published_date": "", "author": ""}
+    return None
+
 
 def registrable(url: str) -> str:
     host = urlparse(url if "//" in url else "https://" + url).netloc.lower().split(":")[0]
@@ -172,6 +232,12 @@ LAST: dict = {"sources": {}, "contents": {}, "topic": ""}
 SESSIONS: dict[str, Session] = {}
 SEQ = {"s": 0, "n": 0, "t": 0}
 TRACE: queue.Queue = queue.Queue()
+
+
+def session_of(body: dict) -> "Session | None":
+    """Work belongs to a session. Without this the store forgets everything the moment
+    the reviewer goes back to the list, and reopening shows an empty screen."""
+    return SESSIONS.get((body or {}).get("session") or "")
 
 
 def next_id(kind: str, width: int = 2) -> str:
@@ -312,10 +378,8 @@ def do_research(body: dict) -> dict:
     if usable:
         emit("ok", f"Chấm sáu tiêu chí cho {len(usable)} nguồn")
         scored = gemini(
-            "Chấm từng nguồn theo sáu tiêu chí, mỗi tiêu chí 0 hoặc 1. Không suy đoán để lấp "
-            "điểm: không bóc được tác giả thì author = 0. Không cho điểm chỉ vì tên miền. "
-            "fresh chấm theo chủ đề: khái niệm ổn định thì cũ vẫn còn mới, chủ đề biến động "
-            f"nhanh thì bài cũ là không mới. Chủ đề đang xét: {topic!r}.\n"
+            "Chấm từng nguồn theo sáu tiêu chí, mỗi tiêu chí 0 hoặc 1.\n"
+            f"Chủ đề đang xét: {topic!r}.\n\n" + CRITERIA_GUIDE + "\n\n"
             "why là MỘT câu tiếng Việt nêu bằng chứng cụ thể, không nêu cảm tính.\n"
             "kind là loại trang: Tài liệu chính thức, Bài báo khoa học, Báo chí, Blog cá nhân, "
             "Diễn đàn, Trang tổng hợp.\n\n"
@@ -398,6 +462,9 @@ def do_research(body: dict) -> dict:
     LAST["sources"] = sources
     LAST["contents"] = {sid: (it.get("content") or "") for sid, it in usable}
     LAST["topic"] = topic
+    if len(claims) >= 2:
+        find_conflicts(claims, sources)
+
     emit("ok", f"Xong: {len(claims)} dữ kiện từ {len(usable)} nguồn dùng được")
     TRACE.put(None)
     return {"sources": sources, "claims": claims, "cost": None}
@@ -415,14 +482,21 @@ def _renumber(sentences):
     return sentences
 
 
-def _clean(rows, claims, default_sec):
+def _clean(rows, claims, default_sec, sections=None):
+    """Section numbers are clamped to the ones actually declared. The model would return
+    sec: 4 on a two-section script, which the judge rejected and no revision ever fixed,
+    so the loop spent three passes failing on arithmetic nobody needed it to do."""
+    valid = sorted({x["no"] for x in (sections or [])}) or None
     out = []
     for s in rows or []:
         loi = (s.get("loi") or "").strip()
         if not loi:
             continue
+        sec = int(s.get("sec") or default_sec)
+        if valid and sec not in valid:
+            sec = min(valid, key=lambda v: abs(v - sec))
         out.append({
-            "n": 0, "sec": int(s.get("sec") or default_sec),
+            "n": 0, "sec": sec,
             "kieu": s.get("kieu") if s.get("kieu") in ("ke", "giang", "nhe", "hoi", "nhan") else "giang",
             "loi": loi, "chu": (s.get("chu") or "").strip()[:40],
             "hinh": (s.get("hinh") or "").strip(),
@@ -440,18 +514,25 @@ def _claim_list(claims):
 
 
 RULES = (
-    "Luat bat buoc, vi pham la phai viet lai:\n"
-    "- KHONG chu so trong loi. Viet bang chu: hai nghin, khong phai 2000.\n"
-    "- Khong viet tat chua giai thich. Nghia tieng Viet truoc, thuat ngu tieng Anh mot lan sau do.\n"
-    "- chu toi da 40 ky tu va khong duoc cat giua tu; cau nao cung phai co chu va hinh.\n"
-    "- Moi loi dung MOT cau, mot dau ket thuc.\n"
-    "- kieu la mot trong: ke, giang, nhe, hoi, nhan.\n"
-    "- cls la mang ma du kien cau do dua vao, chi dung ma co trong danh sach. "
-    "Cau chuyen doan de [] va phai ngan, duoi chin am tiet. Cau nao khang dinh dieu gi thi "
-    "PHAI co ma du kien.\n"
-    "- Tieng Viet doc khoang hai phay chin am tiet mot giay. Muon dai hon thi viet THEM cau "
-    "co dan nguon, dung nhoi chu vao mot cau.\n"
-    "- Khong lap lai ten chu de hai lan trong cung mot cau."
+    "Luật bắt buộc, vi phạm là phải viết lại:\n"
+    "- KHÔNG chữ số trong loi. Viết bằng chữ: hai nghìn, không phải 2000.\n"
+    "- Không viết tắt chưa giải thích. Nghĩa tiếng Việt trước, thuật ngữ tiếng Anh nhắc "
+    "một lần sau đó.\n"
+    "- chu tối đa 40 ký tự và không được cắt giữa từ; câu nào cũng phải có chu và hinh.\n"
+    "- Mỗi loi đúng MỘT câu, một dấu kết thúc.\n"
+    "- kieu là một trong: ke, giang, nhe, hoi, nhan.\n"
+    "- cls là mảng mã dữ kiện câu đó dựa vào, chỉ dùng mã có trong danh sách. Câu chuyển "
+    "đoạn để [] và phải ngắn, dưới chín âm tiết. Câu nào khẳng định điều gì thì PHẢI có "
+    "mã dữ kiện.\n"
+    "- Tiếng Việt đọc khoảng hai phẩy chín âm tiết một giây. Muốn dài hơn thì viết THÊM "
+    "câu có dẫn nguồn, đừng nhồi chữ vào một câu.\n"
+    "- Không lặp lại tên chủ đề hai lần trong cùng một câu.\n"
+    "- KHÔNG tự kể nguồn trong lời đọc. Không viết 'theo tài liệu', 'sách kỹ thuật xác "
+    "nhận', 'báo cáo chỉ ra', 'chuyên gia đánh giá'. Nói thẳng nội dung; phần dẫn nguồn "
+    "nằm ở cls.\n"
+    "- Không viết câu chung chung cho đủ thời lượng. Mỗi câu phải nói một điều cụ thể lấy "
+    "từ dữ kiện nó dẫn, và phải đúng với nội dung dữ kiện đó.\n"
+    "- Phân bổ đều các dữ kiện, đừng dồn nhiều câu vào cùng một dữ kiện."
 )
 
 
@@ -467,7 +548,9 @@ def plan_sections(brief, target, claims, calls):
         '{"sections": [{"no": 1, "name": "...", "seconds": 60}]}',
     )
     sections = []
-    for i, sec in enumerate(out.get("sections") or [], start=1):
+    # The model returned four sections for a forty second video. Its own arithmetic is not
+    # load bearing here: we asked for a number, and we hold it to that number.
+    for i, sec in enumerate((out.get("sections") or [])[:want], start=1):
         sections.append({"no": i, "name": sec.get("name") or ("Phan %d" % i),
                          "seconds": float(sec.get("seconds") or 0) or target / want})
     if not sections:
@@ -489,7 +572,7 @@ def write_section(brief, section, claims, calls):
         + RULES + "\n\nDu kien dung duoc:\n" + _claim_list(claims),
         '{"sentences": [{"kieu": "giang", "loi": "...", "chu": "...", "hinh": "...", "cls": ["tXX"]}]}',
     )
-    return _clean(out.get("sentences"), claims, section["no"])
+    return _clean(out.get("sentences"), claims, section["no"], [section])
 
 
 def revise(sentences, problems, claims, calls, sections):
@@ -507,7 +590,7 @@ def revise(sentences, problems, claims, calls, sections):
             ensure_ascii=False),
         '{"sentences": [{"sec": 1, "kieu": "giang", "loi": "...", "chu": "...", "hinh": "...", "cls": ["tXX"]}]}',
     )
-    fixed = _clean(out.get("sentences"), claims, 1)
+    fixed = _clean(out.get("sentences"), claims, 1, sections)
     return _renumber(fixed) if fixed else sentences
 
 
@@ -609,8 +692,92 @@ def topup_claims(brief, sections, claims, calls, rounds=3):
             kept += 1
         emit("ok", "Ph\u1ea7n %d: th\u00eam %d d\u1eef ki\u1ec7n, b\u1ecf %d \u0111o\u1ea1n tr\u00edch kh\u00f4ng kh\u1edbp" % (sec["no"], kept, dropped))
 
+        # Score what we just took claims from. Leaving a top-up source at a flat middle
+        # while first-pass sources carry real scores makes the dossier inconsistent.
+        if kept and len(calls) < CALL_BUDGET:
+            calls.append(1)
+            try:
+                marks = gemini(
+                    "Ch\u1ea5m t\u1eebng ngu\u1ed3n theo s\u00e1u ti\u00eau ch\u00ed, m\u1ed7i ti\u00eau ch\u00ed 0 ho\u1eb7c 1.\n"
+                    "Ch\u1ee7 \u0111\u1ec1 \u0111ang x\u00e9t: %r.\n\n" % topic + CRITERIA_GUIDE
+                    + "\n\nwhy l\u00e0 M\u1ed8T c\u00e2u ti\u1ebfng Vi\u1ec7t n\u00eau b\u1eb1ng ch\u1ee9ng c\u1ee5 th\u1ec3.\n\n"
+                    + json.dumps([{"id": sid, "title": added_sources[sid]["title"],
+                                   "url": added_sources[sid]["url"],
+                                   "content": (it.get("content") or "")[:1200]}
+                                  for sid, it in fresh], ensure_ascii=False),
+                    '{"sources": [{"id": "nXX", "kind": "...", "why": "...", "score": '
+                    '{"author": 0, "date": 0, "fresh": 0, "cites": 0, "primary": 0, "record": 0}}]}',
+                )
+                for row in marks.get("sources") or []:
+                    msid = row.get("id")
+                    if msid not in added_sources:
+                        continue
+                    sc = {k: (1 if (row.get("score") or {}).get(k) else 0) for k in WEIGHTS}
+                    tot = sum(WEIGHTS[k] * v for k, v in sc.items())
+                    added_sources[msid].update({
+                        "score": sc,
+                        "trust": "cao" if tot >= 6 else "trungbinh" if tot >= 4 else "thap",
+                        "why": row.get("why") or added_sources[msid]["why"],
+                        "kind": row.get("kind") or added_sources[msid]["kind"],
+                    })
+            except Exception as exc:
+                emit("caution", "Kh\u00f4ng ch\u1ea5m \u0111\u01b0\u1ee3c ngu\u1ed3n b\u1ed5 sung: %s" % exc)
+
     LAST["sources"].update(added_sources)
     return added_sources, added_claims
+
+
+def find_conflicts(claims: dict, sources: dict) -> None:
+    """Two sources that both pass the criteria and still disagree.
+
+    The system is not allowed to pick a side. It merges the two claims into one marked
+    mauthuan, keeps both passages, and hands the choice to the reviewer with the name of
+    whoever chose recorded on the way out.
+    """
+    listed = json.dumps(
+        [{"id": cid, "kind": c["kind"], "text": c["text"],
+          "hits": [e["hit"] for e in c["evidence"]]} for cid, c in claims.items()],
+        ensure_ascii=False,
+    )
+    try:
+        out = gemini(
+            "Dưới đây là các dữ kiện rút từ nhiều nguồn khác nhau.\n"
+            "Tìm những CẶP dữ kiện nói về CÙNG một đại lượng hoặc cùng một điều, nhưng đưa "
+            "con số hay kết luận KHÁC NHAU. Chỉ ghép khi thật sự cùng một thứ: hai con số đo "
+            "hai việc khác nhau, hoặc ở hai thời điểm khác nhau, KHÔNG phải mâu thuẫn.\n"
+            "note là một câu tiếng Việt nói rõ hai bên khác nhau ở đâu.\n"
+            "Không tìm được cặp nào thì trả về mảng rỗng.\n\n" + listed,
+            '{"pairs": [{"a": "tXX", "b": "tYY", "note": "..."}]}',
+        )
+    except Exception as exc:
+        emit("caution", f"Không kiểm được mâu thuẫn: {exc}")
+        return
+
+    for pair in out.get("pairs") or []:
+        a, b = pair.get("a"), pair.get("b")
+        if a not in claims or b not in claims or a == b:
+            continue
+        keep, drop = claims[a], claims.pop(b)
+        keep["evidence"] = keep["evidence"] + drop["evidence"]
+        keep["state"] = "mauthuan"
+        keep["soNguonXacNhan"] = len({registrable(sources[e["src"]]["url"])
+                                      for e in keep["evidence"] if e["src"] in sources})
+        options = []
+        for e in keep["evidence"]:
+            src = sources.get(e["src"]) or {}
+            e["value"] = e["hit"]
+            options.append({"id": e["src"],
+                            "label": f"Dùng số của {e['src']}, {src.get('org') or src.get('url', '')}"[:70],
+                            "value": e["hit"][:60]})
+        options.append({"id": "both", "label": "Nói rõ là các nguồn đưa số khác nhau",
+                        "value": "các nguồn khác nhau"})
+        keep["conflict"] = {
+            "note": pair.get("note") or "Các nguồn đạt tiêu chí nhưng đưa con số khác nhau. "
+                                        "Hệ thống không tự chọn một bên.",
+            "hedge": "Các nguồn công bố con số khác nhau, nên phần này chưa nói thành số cụ thể.",
+            "options": options,
+        }
+        emit("caution", f"Hai nguồn đạt tiêu chí nhưng khác nhau, đánh dấu mâu thuẫn", claim=a)
 
 
 def do_write(body):
@@ -674,13 +841,17 @@ def do_write(body):
     # Now judge the whole thing, including the length it was actually asked for.
     passes = 0
     problems = (validate.check_script(sentences, sections, claims, target)
-                + validate.uncited_assertions(sentences))
+                + validate.uncited_assertions(sentences)
+                + validate.overused_claims(sentences, len(usable))
+                + validate.narrated_sourcing(sentences))
     while problems and passes < 3 and len(calls) < CALL_BUDGET:
         passes += 1
         emit("caution", "T\u1ef1 ki\u1ec3m l\u01b0\u1ee3t %d: %d l\u1ed7i, vi\u1ebft l\u1ea1i" % (passes, len(problems)))
         sentences = revise(sentences, problems, usable, calls, sections)
         problems = (validate.check_script(sentences, sections, claims, target)
-                    + validate.uncited_assertions(sentences))
+                    + validate.uncited_assertions(sentences)
+                    + validate.overused_claims(sentences, len(usable))
+                + validate.narrated_sourcing(sentences))
 
     total = round(sum(s["dur"] for s in sentences), 1)
     if problems:
@@ -700,26 +871,203 @@ def do_write(body):
     }
 
 
+def rewrite_lines(kept: list[dict], numbers: list[int], live: dict,
+                  sections: list[dict], reason: str) -> list[dict]:
+    """Rewrite named lines in place. Everything else is returned untouched, by construction:
+    the model is only ever shown the lines being replaced, and only those are spliced back."""
+    index = {k["n"]: i for i, k in enumerate(kept)}
+    targets = [kept[index[n]] for n in numbers if n in index]
+    if not targets:
+        return kept
+    out = gemini(
+        reason + "\n"
+        "Chỉ viết lại những câu dưới đây. Giữ nguyên số n của từng câu. Nếu một câu không "
+        "còn dữ kiện nào đỡ thì viết thành câu chuyển đoạn ngắn, dưới chín âm tiết, cls là [].\n\n"
+        + RULES + "\n\nDỮ KIỆN CÒN DÙNG ĐƯỢC:\n" + _claim_list(live)
+        + "\n\nTOÀN BỘ KỊCH BẢN, chỉ để lấy ngữ cảnh:\n"
+        + json.dumps([{"n": k["n"], "loi": k["loi"]} for k in kept], ensure_ascii=False)
+        + "\n\nCÁC CÂU CẦN VIẾT LẠI:\n" + json.dumps(
+            [{"n": t["n"], "sec": t["sec"], "kieu": t["kieu"], "loi": t["loi"], "cls": t["cls"]}
+             for t in targets], ensure_ascii=False),
+        '{"sentences": [{"n": 1, "kieu": "giang", "loi": "...", "chu": "...", '
+        '"hinh": "...", "cls": ["tXX"]}]}',
+    )
+    fixed = {int(r.get("n") or 0): r for r in (out.get("sentences") or [])}
+    for n in numbers:
+        i = index.get(n)
+        r = fixed.get(n)
+        if i is None or not r or not (r.get("loi") or "").strip():
+            continue
+        row = kept[i]
+        row.setdefault("was", row["loi"])
+        row["loi"] = r["loi"].strip()
+        row["chu"] = (r.get("chu") or row["chu"])[:40]
+        row["hinh"] = r.get("hinh") or row["hinh"]
+        row["kieu"] = r.get("kieu") if r.get("kieu") in (
+            "ke", "giang", "nhe", "hoi", "nhan") else row["kieu"]
+        row["cls"] = [c for c in (r.get("cls") or []) if c in live]
+        row["state"] = "redo"
+    return kept
+
+
+def named_lines(problems: list[str]) -> list[int]:
+    return sorted({int(m) for p in problems for m in re.findall(r"Câu (\d+):", p)})
+
+
 def do_rewrite(body: dict) -> dict:
-    """Drop what died, renumber, and bridge. Untouched sentences come back identical."""
+    """Drop what died, rewrite only what leaned on it, leave everything else untouched.
+
+    The untouched part is the promise. A reviewer who rejects one fact and gets a freshly
+    worded script back has to re-read all of it, which is worse than useless.
+    """
+    reset_usage()
+    RUN_START["t"] = time.monotonic()
+
     dead = body.get("killed") or {}
-    kept, changed, shift = [], [], 0
-    for s in body.get("sentences") or []:
-        cls = s.get("cls") or ([s["cl"]] if s.get("cl") else [])
+    claims = body.get("claims") or {}
+    brief = body.get("brief") or {}
+    target = float(body.get("targetSeconds") or brief.get("targetSeconds") or 0)
+    rows = body.get("sentences") or []
+    sections = body.get("sections") or [{"no": 1, "name": "Nội dung"}]
+    live = {cid: c for cid, c in claims.items() if not dead.get(cid)}
+
+    kept: list[dict] = []
+    changed: list[dict] = []
+    redo: list[int] = []
+    shift = 0
+
+    for row in rows:
+        cls = row.get("cls") or ([row["cl"]] if row.get("cl") else [])
         if cls and all(dead.get(c) for c in cls):
             shift += 1
-            changed.append({"n": s["n"], "how": "bo"})
+            changed.append({"n": row["n"], "how": "bo"})
+            emit("stop", f"Bỏ câu {row['n']}, dữ kiện chống lưng đã bị loại")
             continue
-        o = dict(s)
-        o["shown"] = s["n"] - shift
-        o["state"] = "keep"
+        out = dict(row)
+        out["shown"] = row["n"] - shift
+        out["state"] = "keep"
         if cls and any(dead.get(c) for c in cls):
-            live = [c for c in cls if not dead.get(c)]
-            o["cls"] = live
-            o["state"] = "redo"
-            changed.append({"n": s["n"], "how": "vietlai"})
-        kept.append(o)
-    return {"sentences": kept, "changed": changed}
+            out["cls"] = [c for c in cls if not dead.get(c)]
+            redo.append(len(kept))
+        kept.append(out)
+
+    if redo:
+        emit("ok", f"Viết lại {len(redo)} câu còn tựa vào dữ kiện đã loại")
+        numbers = [kept[i]["n"] for i in redo]
+        try:
+            kept = rewrite_lines(
+                kept, numbers, live, sections,
+                "Người duyệt đã loại một số dữ kiện. Những câu dưới đây không được dựa vào "
+                "dữ kiện đã loại nữa, nhưng vẫn phải liền mạch với các câu xung quanh.")
+            for n in numbers:
+                changed.append({"n": n, "how": "vietlai"})
+        except Exception as exc:
+            emit("caution", f"Không viết lại được bằng mô hình: {exc}")
+
+    _renumber(kept)
+
+    # Judged WITHOUT the total-duration rule. Rejecting a fact legitimately makes the
+    # video shorter, and the first version of this repaired the shortfall by regenerating
+    # the whole script, which broke the one promise the feature exists to keep and
+    # invented two sentences nobody asked for.
+    def judge(rows):
+        return (validate.check_script(rows, sections, claims, 0, dead)
+                + validate.uncited_assertions(rows)
+                + validate.narrated_sourcing(rows))
+
+    problems = judge(kept)
+    if problems:
+        lines = named_lines(problems)
+        emit("caution", f"Sau khi viết lại còn {len(problems)} điểm chưa đạt, sửa "
+                        f"{len(lines)} câu được nêu tên")
+        if lines:
+            try:
+                kept = rewrite_lines(kept, lines, live, sections,
+                                     "Bộ kiểm máy nêu các lỗi sau, sửa đúng những câu này:\n- "
+                                     + "\n- ".join(problems))
+            except Exception as exc:
+                emit("caution", f"Không sửa được: {exc}")
+        _renumber(kept)
+        problems = judge(kept)
+
+    total = round(sum(s["dur"] for s in kept), 1)
+    if target and total < target * 0.85:
+        emit("caution", f"Còn {len(kept)} câu, {total} giây, ngắn hơn mục tiêu "
+                        f"{round(target)} giây. Bỏ một dữ kiện thì video ngắn lại, "
+                        "hệ thống không tự viết thêm để bù.")
+    else:
+        emit("ok", f"Còn {len(kept)} câu, {total} giây")
+    return {"sentences": kept, "changed": changed, "remaining": problems,
+            "usage": usage_report()}
+
+
+def do_add_source(body: dict) -> dict:
+    """The reviewer found a page themselves. It gets scored exactly like one we found."""
+    url = (body.get("url") or "").strip()
+    if not url:
+        raise RuntimeError("Chưa có địa chỉ trang.")
+    # Without the topic, "bề dày về đúng chủ đề" cannot be judged and the model credits
+    # general reputation instead: a news homepage scored eight out of eight for Kubernetes.
+    sess = session_of(body)
+    topic = ((sess.brief or {}).get("topic") if sess else None) or LAST.get("topic") or ""
+    reset_usage()
+    RUN_START["t"] = time.monotonic()
+    emit("ok", f"Tải trang người duyệt thêm: {url}")
+
+    full = url if "//" in url else "https://" + url
+    host = registrable(full)
+    try:
+        item = tavily_extract(full)
+    except Exception as exc:
+        raise RuntimeError(f"Không tải được trang: {exc}")
+    if not item:
+        raise RuntimeError("Không đọc được nội dung trang này. Có thể trang bắt đăng nhập.")
+    if registrable(item["url"]) != host:
+        # Never pass a different page off as the one that was asked for.
+        raise RuntimeError(f"Trang trả về thuộc {registrable(item['url'])}, không phải {host}.")
+
+    content = item.get("content") or ""
+    hidden = suspicious(f"{item.get('title','')} {content}")
+    sid = next_id("n")
+    src = {
+        "title": (item.get("title") or "").strip() or re.sub(r"^https?://", "", item["url"]),
+        "org": (item.get("author") or "") or urlparse(item["url"]).netloc,
+        "url": re.sub(r"^https?://", "", item["url"]),
+        "published": item.get("published_date") or "",
+        "fetched": now_stamp(), "kind": "Trang web",
+        "lang": "vi" if re.search(r"[ăâđêôơư]", content, re.I) else "en",
+        "state": "dung", "note": body.get("note") or "",
+    }
+    if hidden:
+        src.update({"trust": "chan", "state": "chan", "injected": hidden,
+                    "why": "Trang chèn chữ ẩn ra lệnh cho hệ thống.",
+                    "removedWhy": "Hệ thống chặn vì phát hiện lệnh ẩn."})
+        emit("stop", f"Chặn {src['url']}, trang chèn lệnh ẩn", src=sid)
+        return {"id": sid, "source": src, "usage": usage_report()}
+
+    scored = gemini(
+        "Chấm nguồn này theo sáu tiêu chí, mỗi tiêu chí 0 hoặc 1.\n"
+        f"Chủ đề đang xét: {topic!r}. Nếu trang không nói về chủ đề này thì record = 0 "
+        "dù trang có uy tín chung đến đâu.\n\n" + CRITERIA_GUIDE
+        + "\n\nwhy là một câu tiếng Việt nêu bằng chứng cụ thể.\n\n"
+        + json.dumps({"title": src["title"], "url": src["url"],
+                      "published": src["published"], "content": content[:1500]},
+                     ensure_ascii=False),
+        '{"kind": "...", "why": "...", "score": {"author": 0, "date": 0, "fresh": 0, '
+        '"cites": 0, "primary": 0, "record": 0}}',
+    )
+    score = {k: (1 if (scored.get("score") or {}).get(k) else 0) for k in WEIGHTS}
+    total = sum(WEIGHTS[k] * v for k, v in score.items())
+    src.update({
+        "score": score,
+        "trust": "cao" if total >= 6 else "trungbinh" if total >= 4 else "thap",
+        "why": scored.get("why") or "",
+        "kind": scored.get("kind") or src["kind"],
+    })
+    LAST["sources"][sid] = src
+    LAST["contents"][sid] = content
+    emit("ok", f"Chấm xong: mức tin cậy {src['trust']}")
+    return {"id": sid, "source": src, "usage": usage_report()}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -763,7 +1111,8 @@ class Handler(BaseHTTPRequestHandler):
                 "meta": s.meta(), "brief": s.brief, "sources": s.sources,
                 "claims": s.claims, "script": s.script, "cost": None,
             })
-        if path in ("/research/stream", "/write/stream", "/rewrite/stream"):
+        if path in ("/research/stream", "/write/stream", "/rewrite/stream",
+                    "/sources/stream"):
             return self.stream()
         return self.reply(404, {"error": "Không có đường dẫn này."})
 
@@ -806,20 +1155,61 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/research":
                 while not TRACE.empty():      # a previous run's tail must not leak in
                     TRACE.get_nowait()
-                return self.reply(200, do_research(body))
+                reset_usage()
+                out = do_research(body)
+                out["usage"] = usage_report()
+                out["cost"] = out["usage"]["cost"]
+                sess = session_of(body)
+                if sess:
+                    sess.brief = body.get("brief") or sess.brief
+                    sess.sources, sess.claims = out["sources"], out["claims"]
+                    sess.state = "tim"
+                    if sess.brief and sess.brief.get("raw"):
+                        sess.title = sess.brief["raw"][:90]
+                TRACE.put(None)
+                return self.reply(200, out)
             if path == "/write":
                 while not TRACE.empty():
                     TRACE.get_nowait()
+                reset_usage()
                 out = do_write(body)
+                out["usage"] = usage_report()
+                sess = session_of(body)
+                if sess:
+                    sess.claims = {**sess.claims, **(out.get("claims") or {})}
+                    sess.sources = {**sess.sources, **(out.get("sources") or {})}
+                    sess.script = {"sections": out["sections"], "sentences": out["sentences"]}
+                    sess.state = "duyet"
                 TRACE.put(None)          # release the stream this phase was watching
                 return self.reply(200, out)
             if path == "/rewrite":
+                while not TRACE.empty():
+                    TRACE.get_nowait()
+                out = do_rewrite(body)
+                sess = session_of(body)
+                if sess and sess.script:
+                    sess.script = {"sections": sess.script["sections"],
+                                   "sentences": out["sentences"]}
                 TRACE.put(None)
-                return self.reply(200, do_rewrite(body))
+                return self.reply(200, out)
             if path == "/conflict":
-                return self.reply(200, {"claimId": body.get("claimId"), "choice": body.get("choice")})
+                sess = session_of(body)
+                cid, choice = body.get("claimId"), body.get("choice")
+                if sess and cid in sess.claims:
+                    # The choice, and who made it, travel with the claim into the export.
+                    sess.claims[cid]["state"] = "daxacminh"
+                    sess.claims[cid]["nguoiDuyetChon"] = sess.owner
+                    sess.claims[cid]["choice"] = choice
+                return self.reply(200, {"claimId": cid, "choice": choice})
             if path == "/sources":
-                return self.reply(501, {"error": "Thêm nguồn tay chưa nối, giao diện sẽ dùng dữ liệu mẫu."})
+                while not TRACE.empty():
+                    TRACE.get_nowait()
+                out = do_add_source(body)
+                sess = session_of(body)
+                if sess:
+                    sess.sources[out["id"]] = out["source"]
+                TRACE.put(None)
+                return self.reply(200, out)
         except Exception as exc:
             TRACE.put(None)
             return self.reply(500, {"error": f"{exc}"})
