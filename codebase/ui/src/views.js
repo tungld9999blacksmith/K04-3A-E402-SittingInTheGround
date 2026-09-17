@@ -180,13 +180,16 @@ window.View = (function () {
   function scriptBlock(st, old) {
     var rows = S.rows();
     var t = rows.reduce(function (a, r) { return a + r.dur; }, 0);
-    var target = (st.brief && st.brief.targetSeconds) || 30;
-    var over = t > target + 0.05;
+    /* No target until the reviewer sets one: a default here reported progress against
+       a length nobody asked for. */
+    var target = st.brief && st.brief.targetSeconds;
+    var over = !!target && t > target + 0.05;
     var cut = S.pendingCuts();
 
     var h = '<div class="art' + (old ? " old" : "") + '">' +
-      '<div class="arth"><span class="ttl">Kịch bản, ba mươi giây mở đầu</span>' +
-      '<span class="dur num ' + (over ? "over" : "ok") + '">' + vn(t) + " giây / mục tiêu " + target + " giây</span></div>";
+      '<div class="arth"><span class="ttl">Kịch bản</span>' +
+      '<span class="dur num ' + (over ? "over" : "ok") + '">' + vn(t) + " giây" +
+      (target ? " / mục tiêu " + Math.round(target) + " giây" : "") + "</span></div>";
 
     if (!old) {
       h += '<div class="cov" role="group" aria-label="Mức bằng chứng từng câu">';
@@ -233,14 +236,42 @@ window.View = (function () {
         '<span class="acts" style="margin:0"><button class="btn quiet" data-act="undo">Hoàn tác</button>' +
         '<button class="btn pri" data-act="rewrite">Viết lại kịch bản</button></span></div>';
     } else if (st.rewritten) {
-      h += '<div class="artf"><span class="sub num">' + (rows.length - 1) +
-        ' câu giữ nguyên từng ký tự, 1 câu viết lại</span>' +
+      /* Counted from what came back, not assumed. This line used to claim one sentence
+         was rewritten however many actually were. */
+      var ch = (st.script && st.script.changed) || [];
+      var dropped = ch.filter(function (x) { return x.how === "bo"; }).length;
+      var redone = ch.filter(function (x) { return x.how === "vietlai"; }).length;
+      h += '<div class="artf"><span class="sub num">' +
+        (rows.length - redone) + " câu giữ nguyên từng ký tự" +
+        (redone ? ", " + redone + " câu viết lại" : "") +
+        (dropped ? ", " + dropped + " câu bị bỏ" : "") + "</span>" +
         '<button class="btn quiet" data-act="undo">Hoàn tác</button></div>';
     } else {
       h += '<div class="artf"><span class="sub">Trỏ vào một câu để soi nguồn. ' +
         '<kbd>j</kbd> <kbd>k</kbd> chuyển câu, <kbd>x</kbd> loại dữ kiện, <kbd>u</kbd> hoàn tác.</span></div>';
     }
+    if (!old) h += finishBar(st);
     return h + "</div>";
+  }
+
+  /* The artifact at the end of the cycle. A local file, playable in place. */
+  function videoBlock(m) {
+    var src = (window.Adapter && window.Adapter.base ? window.Adapter.base : "") + m.url;
+    // Every picture on screen came with an author and a licence; saying so here is the
+    // same promise the script makes about its sentences.
+    var credits = (m.images || []).map(function (im) {
+      return im.author + " · " + im.licence;
+    }).join("; ");
+    return '<div class="art vid">' +
+      '<div class="arth"><span class="t">Video bản nháp</span>' +
+      '<span class="sub num">' + m.cards + " thẻ hình · " + vn(m.seconds) + " giây · " +
+      (m.bytes / 1e6).toFixed(1).replace(".", ",") + " MB</span></div>" +
+      '<video controls preload="metadata" playsinline src="' + esc(src) + '"></video>' +
+      '<div class="artf"><span class="sub">Giọng đọc ' + esc(m.voice || "") +
+      ", chữ và hình dựng tại máy, không dùng mô hình sinh video. " +
+      "Nguồn hiện trên từng thẻ và ở thẻ cuối." +
+      (credits ? " Ảnh: " + esc(credits) + "." : "") + "</span>" +
+      '<a class="btn quiet" href="' + esc(src) + '" download="kich-ban.mp4">Lưu tệp</a></div></div>';
   }
 
   function thread(st) {
@@ -257,8 +288,9 @@ window.View = (function () {
       else if (m.kind === "plan") body = planBlock(st, !m.retired);
       else if (m.kind === "trace") body = esc(m.lead) + traceBlock(m.lines || [], m.pct);
       else if (m.kind === "script") body = scriptBlock(st, !!m.retired);
+      else if (m.kind === "video") body = videoBlock(m);
       else body = "";
-      if (m.kind === "plan" || m.kind === "trace" || m.kind === "script") {
+      if (m.kind === "plan" || m.kind === "trace" || m.kind === "script" || m.kind === "video") {
         return agent(m.lead && m.kind !== "trace" ? "<p>" + esc(m.lead) + "</p>" + body : body);
       }
       return m.role === "user" ? user(body) : agent(body);
@@ -366,6 +398,45 @@ window.View = (function () {
 
   /* Claims the agent refuses to state on its own. Surfacing these is the whole point of a
      review screen: a conflict the reviewer never sees is a conflict the script hides. */
+  /* Counted from the live script. The reviewer should be able to see at a glance that
+     most of it is settled, which is the whole argument for a queue of exceptions. */
+  function coverage(st) {
+    var n = { verified: 0, single: 0, unverified: 0, conflict: 0, none: 0, dead: 0 };
+    S.rows().forEach(function (r) { if (n[r.grade] !== undefined) n[r.grade]++; });
+    var bits = [];
+    if (n.verified) bits.push(n.verified + " đã xác minh");
+    if (n.single) bits.push(n.single + " một nguồn");
+    if (n.unverified) bits.push(n.unverified + " chưa xác minh");
+    if (n.conflict) bits.push(n.conflict + " mâu thuẫn");
+    if (n.none) bits.push(n.none + " câu chuyển");
+    return bits.join(" · ");
+  }
+
+  function openClaims(st) {
+    return Object.keys(st.claims).filter(function (cid) {
+      var c = st.claims[cid];
+      if (c.state === "mauthuan") return !st.conflictChoice[cid];
+      return c.state === "chuaxacminh" && !S.claimDead(cid);
+    });
+  }
+
+  /* The cycle needs an end. Without this the review screen offered only rewrite and
+     undo, so a reviewer who was happy had nothing to press. */
+  function finishBar(st) {
+    var open = openClaims(st).length;
+    var secs = 0;
+    S.rows().forEach(function (r) { if (!r.dead) secs += r.dur || 0; });
+    var target = st.brief && st.brief.targetSeconds;
+    return '<div class="finish">' +
+      '<span class="sub">' + esc(coverage(st)) +
+      (target ? ' · <span class="num">' + vn(secs) + " / " + Math.round(target) + " giây</span>" : "") +
+      "</span>" +
+      '<span class="acts" style="margin:0">' +
+      (open ? '<span class="tag g">' + I.warn + " " + open + " việc chưa quyết</span>" : "") +
+      '<button class="btn pri" data-act="finish">Chốt kịch bản và dựng video</button>' +
+      "</span></div>";
+  }
+
   function decisionQueue(st) {
     var open = Object.keys(st.claims).filter(function (cid) {
       var c = st.claims[cid];
@@ -374,10 +445,24 @@ window.View = (function () {
     });
     if (!open.length) return "";
 
-    var h = '<div><div class="lbl">Cần anh quyết (' + open.length + ")</div>";
+    var at = Math.min(st.queueAt || 0, open.length - 1);
+    var h = '<div><div class="lbl">Cần anh quyết (' + open.length + ")</div>" +
+      '<div class="qnav"><button class="btn quiet" data-act="q-prev"' +
+      (at <= 0 ? " disabled" : "") + ">Trước</button>" +
+      '<span class="sub num">' + (at + 1) + " / " + open.length + "</span>" +
+      '<button class="btn quiet" data-act="q-next"' +
+      (at >= open.length - 1 ? " disabled" : "") + ">Sau</button></div>";
+    open = [open[at]];
     open.forEach(function (cid) {
       var c = st.claims[cid];
+      var inScript = S.rows().some(function (r) { return r.cls.indexOf(cid) >= 0; });
       h += '<div class="src"><div class="row"><span class="t">' + esc(c.text) + "</span></div>";
+      /* A claim can need a decision without appearing in the script: an uncorroborated
+         figure is withheld from the writer. Say so, or the focus appears to be stuck. */
+      if (!inScript) {
+        h += '<p class="sub" style="margin:0 0 var(--s2)">Chưa được đưa vào kịch bản. ' +
+          "Quyết xong thì lượt viết lại mới dùng được.</p>";
+      }
       if (c.state === "mauthuan") {
         h += '<div class="note g">' + I.warn + "<span>" + esc(c.conflict.note) + "</span></div>";
         c.evidence.forEach(function (e) {

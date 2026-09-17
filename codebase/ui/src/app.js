@@ -40,14 +40,35 @@
       }
       /* null means a real run that did not measure its own cost, which is not the same
          thing as never having run. Do not let one read as the other. */
+      var used = shownUsage(st.usage);
       $("cost").textContent = st.cost ? "Chi phí lượt này " + V.money(st.cost) + " đô"
-        : st.cost === null ? "Chưa đo chi phí" : "Bản mô phỏng";
+        : used ? used
+          : st.cost === null ? "Chưa đo chi phí" : "Bản mô phỏng";
       $("mode").textContent = window.API_DOWN ? "máy chủ không trả lời, đang chạy dữ liệu mẫu"
         : A.name === "mock" ? "dữ liệu mẫu" : "đang nối máy chủ";
       $("mode").title = window.API_DOWN || "";
       $("say").disabled = !!st.busy;
     });
   }
+  function sid() { var m = S.get().meta; return m && m.id; }
+
+  /* Each phase reports only what it spent, so the totals add up across the run. */
+  function addUsage(a, b) {
+    if (!b) return a || null;
+    a = a || { tokens: 0, calls: 0, searches: 0 };
+    return { tokens: (a.tokens || 0) + (b.tokens || 0),
+             calls: (a.calls || 0) + (b.calls || 0),
+             searches: (a.searches || 0) + (b.searches || 0) };
+  }
+
+  /* Tokens and searches are what a run actually measured. Money needs a rate the
+     backend was given, so without one the bar reports the measurement, not a guess. */
+  function shownUsage(u) {
+    if (!u || !u.tokens) return null;
+    var t = u.tokens >= 1000 ? V.vn(u.tokens / 1000) + " nghìn token" : u.tokens + " token";
+    return t + (u.searches ? " · " + u.searches + " lượt tìm" : "");
+  }
+
   function toBottom() {
     var m = $("mid");
     m.scrollTop = m.scrollHeight;
@@ -74,8 +95,16 @@
     if (!st.brief) {
       S.set({ brief: {
         topic: text.trim().slice(0, 120), goal: "", learners: "", duration: "",
-        targetSeconds: (st.meta && st.meta.target) || 30, raw: text.trim()
+        targetSeconds: (st.meta && st.meta.target) || null, raw: text.trim()
       } });
+      /* The session was named before anyone said what it was about. Now we know. */
+      var m0 = S.get().meta;
+      if (m0) {
+        var named = Object.assign({}, m0, { title: text.trim().slice(0, 90), state: "tim" });
+        S.set({ meta: named, sessions: S.get().sessions.map(function (x) {
+          return x.id === named.id ? named : x;
+        }) });
+      }
       st = S.get();
     } else {
       st.answers.push(text.trim());
@@ -83,9 +112,31 @@
     S.set({ busy: true });
     toBottom();
 
-    A.clarify({ brief: st.brief, answers: st.answers, askedUpTo: st.askedUpTo })
+    A.clarify({ session: sid(), brief: st.brief, answers: st.answers, askedUpTo: st.askedUpTo })
       .then(function (r) {
         S.set({ busy: false, askedUpTo: r.askedUpTo, chips: r.chips || [] });
+
+        /* Whatever the interview managed to pull out of the answers has to be kept, or
+           the next round asks the same question again and the loop never closes. */
+        if (r.brief && S.get().brief) {
+          var merged = Object.assign({}, S.get().brief, r.brief);
+          if (merged.targetSeconds) {
+            merged.duration = merged.targetSeconds >= 60
+              ? Math.round(merged.targetSeconds / 60) + " phút"
+              : Math.round(merged.targetSeconds) + " giây";
+          }
+          S.set({ brief: merged });
+          var mt = S.get().meta;
+          if (mt && merged.targetSeconds) {
+            S.set({ meta: Object.assign({}, mt, { target: merged.targetSeconds }) });
+          }
+        }
+        /* Say what is still outstanding, so it is obvious why it keeps asking. */
+        if (r.missing && r.missing.length) {
+          S.set({ missing: r.missing });
+        } else {
+          S.set({ missing: [] });
+        }
         if (r.ack) S.push({ role: "agent", kind: "text", html: "<p>" + V.esc(r.ack) + "</p>" });
         if (r.questions && r.questions.length) {
           S.push({ role: "agent", kind: "text", html: questionList(r.questions) });
@@ -102,13 +153,47 @@
 
   function drawPlan() {
     S.set({ busy: true });
-    return A.plan({ brief: S.get().brief, answers: S.get().answers })
+    return A.plan({ session: sid(), brief: S.get().brief, answers: S.get().answers })
       .then(function (p) {
         S.set({ busy: false, phase: "planned", plan: p, criteria: p.criteria });
         S.push({ role: "agent", kind: "plan" });
         toBottom();
       })
       .catch(fail);
+  }
+
+  /* Describes what actually came back. This line used to be a fixed string that claimed
+     five sentences and four sources whatever the result was, which made a real run look
+     rehearsed. Nothing here is allowed to be a guess. */
+  function summarise(w) {
+    var st = S.get();
+    var rows = w.sentences || [];
+    var total = 0, cited = {};
+    rows.forEach(function (r) {
+      total += r.dur || 0;
+      (r.cls || []).forEach(function (c) {
+        (st.claims[c] && st.claims[c].evidence || []).forEach(function (e) { cited[e.src] = true; });
+      });
+    });
+    var target = st.brief && st.brief.targetSeconds;
+    var bits = [rows.length + " câu", Object.keys(cited).length + " nguồn",
+                V.vn(total) + " giây"];
+    if (target) {
+      var drift = total - target;
+      bits.push(Math.abs(drift) / target <= 0.15 ? "đúng mục tiêu"
+        : (drift < 0 ? "ngắn hơn" : "dài hơn") + " mục tiêu "
+          + Math.round(Math.abs(drift)) + " giây");
+    }
+    if (w.passes) bits.push("sau " + w.passes + " lượt tự kiểm");
+    var open = Object.keys(st.claims).filter(function (c) {
+      var x = st.claims[c];
+      return x.state === "mauthuan" || x.state === "chuaxacminh";
+    }).length;
+    if (open) bits.push(open + " dữ kiện còn phải quyết");
+    if (w.remaining && w.remaining.length) {
+      bits.push("còn " + w.remaining.length + " điểm chưa đạt");
+    }
+    return "Xong. " + bits.join(", ") + ".";
   }
 
   /* ---------- research ---------- */
@@ -118,22 +203,106 @@
     S.set({ phase: "researching", busy: true });
 
     var msg = S.push({ role: "agent", kind: "trace", lead: "Bắt đầu tìm.", lines: [], pct: 0 });
-    var total = F.trace.length;
     toBottom();
 
-    A.research({ plan: st.plan }, function (line) {
+    A.research({ session: sid(), plan: st.plan, brief: st.brief }, function (line) {
       msg.lines.push(line);
-      msg.pct = Math.round((msg.lines.length / total) * 100);
+      /* A real run does not announce how many steps it will take, so the bar approaches
+         the end without ever claiming to have arrived. It used to divide by the fixture's
+         step count, which is meaningless against any other backend. */
+      msg.pct = Math.min(95, Math.round(100 - 100 / (1 + msg.lines.length / 4)));
       S.set({});
       toBottom();
     })
       .then(function (r) {
-        S.set({ sources: r.sources, claims: r.claims, cost: r.cost == null ? null : r.cost });
-        return A.write({ claims: r.claims, targetSeconds: st.brief.targetSeconds });
+        S.set({ sources: r.sources, claims: r.claims, usage: addUsage(null, r.usage),
+                cost: r.cost == null ? null : r.cost });
+        /* Writing is the part that iterates, so it reports into the same trace the
+           search was reporting into. Silence here read as a hang. */
+        return A.write({ session: sid(), claims: r.claims, brief: st.brief,
+            targetSeconds: st.brief.targetSeconds },
+          function (line) {
+            msg.lines.push(line);
+            msg.pct = Math.min(98, Math.round(100 - 100 / (1 + msg.lines.length / 4)));
+            S.set({});
+            toBottom();
+          });
       })
       .then(function (w) {
+        msg.pct = 100;
+        if (w.usage) S.set({ usage: addUsage(S.get().usage, w.usage) });
+        /* The backend may have gone back for more sources while writing. */
+        if (w.claims) S.set({ claims: Object.assign({}, S.get().claims, w.claims) });
+        if (w.sources) S.set({ sources: Object.assign({}, S.get().sources, w.sources) });
         S.set({ busy: false, phase: "script", script: w, baseline: JSON.parse(JSON.stringify(w)), focus: 3 });
-        S.push({ role: "agent", kind: "script", lead: "Xong. Năm câu, bốn nguồn. Dài hơn mục tiêu một chút, và một con số chưa xác minh." });
+        S.push({ role: "agent", kind: "script", lead: summarise(w) });
+        toBottom();
+      })
+      .catch(fail);
+  }
+
+  /* Stepping the queue focuses the sentence the decision is about. A counter that moves
+     while the script sits still would tell the reviewer nothing. */
+  function queueStep(delta) {
+    var st = S.get();
+    var open = Object.keys(st.claims).filter(function (cid) {
+      var c = st.claims[cid];
+      if (c.state === "mauthuan") return !st.conflictChoice[cid];
+      return c.state === "chuaxacminh" && !S.claimDead(cid);
+    });
+    if (!open.length) return;
+    var at = Math.max(0, Math.min((st.queueAt || 0) + delta, open.length - 1));
+    /* The queue lives in the dossier pane, so stepping must not switch away from it. */
+    S.set({ queueAt: at, inspect: "dossier" });
+    var cid = open[at];
+    var row = S.rows().filter(function (r) { return r.cls.indexOf(cid) >= 0; })[0];
+    if (row) S.set({ focus: row.n });
+  }
+
+  /* The end of the cycle. Unresolved decisions do not block it: the reviewer is told
+     what is still open and chooses, which is the whole point of a human gate. */
+  function finish(force) {
+    var st = S.get();
+    if (!st.script) return;
+    var open = Object.keys(st.claims).filter(function (cid) {
+      var c = st.claims[cid];
+      if (c.state === "mauthuan") return !st.conflictChoice[cid];
+      return c.state === "chuaxacminh" && !S.claimDead(cid);
+    });
+    if (open.length && !force) {
+      S.push({ role: "agent", kind: "text", html:
+        '<div class="note g">' + V.icons.warn + "<span>Còn " + open.length +
+        " dữ kiện chưa quyết. Chốt luôn thì những câu dựa vào chúng vẫn vào video, " +
+        "kèm dấu cảnh báo trong hồ sơ nguồn.</span></div>" +
+        '<div class="acts"><button class="btn pri" data-act="finish-force">Chốt luôn</button>' +
+        '<button class="btn quiet" data-act="q-next">Xem việc cần quyết</button></div>' });
+      toBottom();
+      return;
+    }
+
+    S.set({ busy: true });
+    var msg = S.push({ role: "agent", kind: "trace", lead: "Chốt kịch bản. Dựng video tại máy.", lines: [], pct: 0 });
+    toBottom();
+
+    A.render({ session: sid(), script: st.script, claims: st.claims, sources: st.sources,
+               brief: st.brief, voice: "nu" }, function (line) {
+      msg.lines.push(line);
+      msg.pct = Math.min(96, Math.round(100 - 100 / (1 + msg.lines.length / 3)));
+      S.set({});
+      toBottom();
+    })
+      .then(function (r) {
+        msg.pct = 100;
+        S.set({ busy: false, video: r, phase: "done" });
+        var m = S.get().meta;
+        if (m) {
+          var done = Object.assign({}, m, { state: "xong" });
+          S.set({ meta: done, sessions: S.get().sessions.map(function (x) {
+            return x.id === done.id ? done : x;
+          }) });
+        }
+        S.push({ role: "agent", kind: "video", url: r.url, bytes: r.bytes,
+                 cards: r.cards, seconds: r.seconds, voice: r.voice });
         toBottom();
       })
       .catch(fail);
@@ -161,13 +330,20 @@
     st.thread.forEach(function (m) { if (m.kind === "script") m.retired = true; });
     S.set({ busy: true });
 
+    /* st.killed IS the set of rejected claims. This used to be rebuilt from r.cl, the
+       single-claim field from before a sentence could cite several, so with real data it
+       was always empty and the rewrite silently did nothing at all. */
     var dead = {};
-    S.rows().forEach(function (r) { if (r.dead && r.cl) dead[r.cl] = true; });
+    Object.keys(st.killed).forEach(function (cid) { if (st.killed[cid]) dead[cid] = true; });
 
     var msg = S.push({ role: "agent", kind: "trace", lead: "Viết lại phần phụ thuộc dữ kiện bị loại.", lines: [] });
     toBottom();
 
-    A.rewrite({ sentences: st.script.sentences, killed: dead }, function (step) {
+    A.rewrite({
+      session: sid(), sentences: st.script.sentences, killed: dead,
+      claims: st.claims, brief: st.brief, sections: st.script.sections,
+      targetSeconds: st.brief && st.brief.targetSeconds
+    }, function (step) {
       msg.lines.push({ text: step, kind: "ok" });
       S.set({});
       toBottom();
@@ -243,6 +419,10 @@
     if (d.open) { openSession(d.open); return; }
     if (d.filter) { S.set({ filter: d.filter }); return; }
     if (d.act === "new") { newSession(); return; }
+    if (d.act === "q-next") { queueStep(1); return; }
+    if (d.act === "q-prev") { queueStep(-1); return; }
+    if (d.act === "finish") { finish(false); return; }
+    if (d.act === "finish-force") { finish(true); return; }
     if (t.id === "send") { say($("say").value); $("say").value = ""; return; }
     if (d.chip) { say(d.chip); return; }
     if (d.tab) { S.set({ inspect: d.tab }); return; }
@@ -282,7 +462,7 @@
     var el = e.target;
     if (!el.dataset || !el.dataset.conflict) return;
     var cid = el.dataset.conflict, choice = el.dataset.choice;
-    A.resolveConflict({ claimId: cid, choice: choice }).then(function () {
+    A.resolveConflict({ session: sid(), claimId: cid, choice: choice }).then(function () {
       var c = JSON.parse(JSON.stringify(S.get().conflictChoice));
       c[cid] = choice;
       S.set({ conflictChoice: c }, { undoable: true });
@@ -294,7 +474,7 @@
     e.preventDefault();
     var url = e.target.elements.url.value, note = e.target.elements.note.value;
     S.set({ busy: true });
-    A.addSource({ url: url, note: note })
+    A.addSource({ session: sid(), url: url, note: note })
       .then(function (r) { S.set({ busy: false, added: r }); })
       .catch(fail);
   });

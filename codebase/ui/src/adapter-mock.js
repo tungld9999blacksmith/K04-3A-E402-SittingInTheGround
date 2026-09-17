@@ -88,7 +88,8 @@ window.MockAdapter = (function () {
       });
     },
 
-    write: function () {
+    write: function (req, onEvent) {
+      if (onEvent) onEvent({ t: 0, kind: "ok", text: "Viết kịch bản từ dữ kiện đã duyệt" });
       return wait(340).then(function () {
         return {
           sections: clone(F.sections),
@@ -143,6 +144,14 @@ window.MockAdapter = (function () {
         s.url = (req.url || s.url).replace(/^https?:\/\//, "");
         s.note = req.note || "";
         return { id: "n06", source: s };
+      });
+    },
+
+    /* No mock video: a fake file would be worse than an honest refusal. */
+    render: function (req, onEvent) {
+      if (onEvent) onEvent({ t: 0, kind: "caution", text: "Bản mô phỏng không dựng được video." });
+      return wait(200).then(function () {
+        throw new Error("Cần máy chủ thật để dựng video. Chạy server/agent.py rồi thử lại.");
       });
     },
 

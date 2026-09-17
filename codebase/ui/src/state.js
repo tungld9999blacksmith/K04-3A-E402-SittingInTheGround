@@ -24,6 +24,7 @@ window.Store = (function () {
     busy: false,
     thread: [],                /* {id, role, kind, ...} */
     answers: [],
+    missing: [],
     askedUpTo: 0,
     chips: [],                 /* suggested replies, supplied by clarify() */
 
@@ -46,6 +47,9 @@ window.Store = (function () {
     hover: null,               /* sentence n, set by pointer */
     inspect: "evidence",       /* evidence | dossier */
     cost: 0,
+    usage: null,               /* tokens and searches a real run actually spent */
+    queueAt: 0,                /* position in the queue of things needing a decision */
+    video: null,               /* the rendered file, once the reviewer has signed off */
     error: null,
     seq: 0
   };
@@ -225,6 +229,9 @@ window.Store = (function () {
     state.hover = null;
     state.inspect = "evidence";
     state.cost = 0;
+    state.usage = null;
+    state.queueAt = 0;
+    state.video = null;
     state.phase = "clarify";
     undoStack.length = 0;
   }

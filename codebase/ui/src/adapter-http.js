@@ -13,14 +13,17 @@
      POST {base}/sessions          {title}                         -> {meta}
      POST {base}/clarify          {brief, answers, askedUpTo}     -> {questions, chips, ack, satisfied, askedUpTo}
      POST {base}/plan             {brief, answers}                -> {prose, criteria}
-     POST {base}/research         {plan}                          -> {sources, claims, cost}
-     POST {base}/write            {claims, targetSeconds}         -> {sections, sentences}
+     POST {base}/research         {plan, brief}                   -> {sources, claims, cost}
+     POST {base}/write            {claims, brief, targetSeconds}  -> {sections, sentences}
      POST {base}/rewrite          {sentences, killed}             -> {sentences, changed}
      POST {base}/sources          {url, note}                     -> {id, source}
+     POST {base}/render           {session, voice}                -> {url, bytes, cards, seconds}
+     GET  {base}/video/{id}.mp4   the rendered file, honours Range requests
      POST {base}/conflict         {claimId, choice}                -> {claimId, choice}
 
    Progress for research and rewrite streams from:
      GET  {base}/research/stream  text/event-stream, one JSON line per trace entry
+     GET  {base}/write/stream     same, one line per section written and per self-check pass
      GET  {base}/rewrite/stream   same
    If the stream is unavailable the call still resolves; the trace simply arrives at once.
 
@@ -78,6 +81,7 @@ window.HttpAdapter = function (base) {
 
   return {
     name: "http:" + base,
+    base: base,                 /* the video element needs an absolute source */
 
     listSessions: function () { return get("/sessions"); },
     openSession: function (req) { return get("/sessions/" + encodeURIComponent(req.id)); },
@@ -90,13 +94,19 @@ window.HttpAdapter = function (base) {
       return withStream("/research/stream", function () { return post("/research", req); }, onEvent);
     },
 
-    write: function (req) { return post("/write", req); },
+    write: function (req, onEvent) {
+      return withStream("/write/stream", function () { return post("/write", req); }, onEvent);
+    },
 
     rewrite: function (req, onEvent) {
       return withStream("/rewrite/stream", function () { return post("/rewrite", req); }, onEvent);
     },
 
     addSource: function (req) { return post("/sources", req); },
+
+    render: function (req, onEvent) {
+      return withStream("/render/stream", function () { return post("/render", req); }, onEvent);
+    },
     resolveConflict: function (req) { return post("/conflict", req); }
   };
 };
