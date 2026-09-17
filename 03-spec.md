@@ -8,40 +8,8 @@ Loại: [X] Tối ưu tính năng có sẵn  [X] Tính năng mới
 
 - **Job executor + workflow:**  
   Người viết kịch bản/giảng viên:
-flowchart TD
-    A["Đầu vào<br/>chủ đề, mục tiêu, người học, thời lượng"]
-    B["Tìm và chấm tin cậy nguồn<br/>theo tiêu chí công bố trước"]
-    C["Người viết duyệt hồ sơ nguồn<br/>bỏ, giữ hoặc thêm nguồn"]
-    D["Tách mệnh đề, đối chiếu chéo<br/>chỉ từ nguồn đã duyệt"]
+![Uploading image.png…]()
 
-    E["Viết thẳng<br/>≥2 nguồn độc lập khớp"]
-    F["Gắn cờ<br/>1 nguồn / mâu thuẫn"]
-    G["Không viết<br/>không có căn cứ"]
-
-    H["Người viết xử lý mệnh đề gắn cờ<br/>chọn số liệu, bổ sung nguồn"]
-    I["Bộ quy tắc<br/>phong cách khoá học"]
-    J["Viết lời đọc, mở đầu, chuyển cảnh<br/>không thêm thông tin mới"]
-    K["Soát trích dẫn tự động<br/>đối chiếu với snapshot"]
-    L["Người reviewer duyệt kịch bản<br/>nội dung cốt lõi và phong cách"]
-    M["Xuất kịch bản và hồ sơ nguồn<br/>giữ liên kết câu và nguồn"]
-
-    A --> B --> C --> D
-    D --> E
-    D --> F
-    D --> G
-    F --> H
-    E --> J
-    H --> J
-    I --> J
-    J --> K --> L --> M
-
-    classDef ai fill:#eeeeff,stroke:#7770aa,color:#333;
-    classDef human fill:#fff0d8,stroke:#b38a4a,color:#333;
-    classDef neutral fill:#f5f2e9,stroke:#888,color:#333;
-
-    class B,D,E,J ai;
-    class C,F,G,H,L human;
-    class A,I,K,M neutral;
 - **Core JTBD:**  
   > Khi chuẩn bị một video bài giảng, tôi muốn nhanh chóng tìm và kiểm chứng các tài liệu liên quan rồi chuyển chúng thành một kịch bản nói tự nhiên, để tôi có thể duyệt nội dung và truy ngược từng thông tin quan trọng về bằng chứng gốc trước khi quay.
 
