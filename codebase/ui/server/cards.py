@@ -119,7 +119,8 @@ def _fit_caption(draw: ImageDraw.ImageDraw, text: str, max_w: int, max_lines: in
 
 
 def card(size=(1920, 1080), bg=None, eyebrow=None, title="", caption="",
-         footer_left="", footer_right="", accent=None, caption_lines=4) -> Image.Image:
+         footer_left="", footer_right="", accent=None, caption_lines=4,
+         want_layers=False):
     w, h = size
     accent_color = accent or GOLD
 
@@ -168,9 +169,14 @@ def card(size=(1920, 1080), bg=None, eyebrow=None, title="", caption="",
             d.ellipse([w - 330 - r, h - 120 - r, w - 330 + r, h - 120 + r],
                       outline=ring, width=3)
 
-    d = ImageDraw.Draw(img)
-    # Left accent spine anchors the frame across transitions.
-    d.rectangle([0, 0, 14, h], fill=accent_color)
+    ImageDraw.Draw(img).rectangle([0, 0, 14, h], fill=accent_color)
+
+    # All type is drawn on its own transparent layer. Composited, the card looks exactly
+    # as before; handed to the renderer separately, the words can fade and rise while the
+    # picture behind them keeps moving — which is the difference between a lecture and a
+    # slideshow that happens to zoom.
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
 
     max_w = w - 260
     FOOT_Y = h - 130
@@ -235,4 +241,8 @@ def card(size=(1920, 1080), bg=None, eyebrow=None, title="", caption="",
         fr = footer_right.strip()
         d.text((w - 130 - d.textlength(fr, font=foot_font), foot_y), fr, font=foot_font, fill=MUTED)
 
-    return img
+    if want_layers:
+        return img, layer
+    out = img.convert("RGBA")
+    out.alpha_composite(layer)
+    return out.convert("RGB")

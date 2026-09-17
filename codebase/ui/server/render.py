@@ -104,6 +104,32 @@ def display_title(brief: dict) -> str:
     return (head[:1].upper() + head[1:]) if head else "Kịch bản bài giảng"
 
 
+BEAT_SECONDS = 22.0
+
+
+def group_beats(rows: list[dict], limit: float = BEAT_SECONDS) -> list[list[dict]]:
+    """Gather consecutive sentences under one held picture.
+
+    A card per sentence is what makes the film read as a deck of slides: the picture
+    changes every six seconds and the eye keeps restarting. A lecture holds one image
+    while the explanation runs across several sentences, so a new card starts only where
+    a new idea does — a fresh on-screen line, a new section, or a beat that has run long.
+    """
+    beats: list[list[dict]] = []
+    for row in rows:
+        starts = (
+            not beats
+            or row.get("sec") != beats[-1][0].get("sec")
+            or bool((row.get("chu") or "").strip())
+            or sum(float(r.get("dur") or 0) for r in beats[-1]) >= limit
+        )
+        if starts:
+            beats.append([row])
+        else:
+            beats[-1].append(row)
+    return beats
+
+
 def sources_for(row: dict, claims: dict) -> list[str]:
     out: list[str] = []
     for cid in row.get("cls") or []:
@@ -290,9 +316,17 @@ def render(script: dict, claims: dict, sources: dict, brief: dict, outdir: Path,
     parts.append(clip)
     say("ok", "Xong thẻ mở đầu")
 
-    # one card per sentence
-    for i, row in enumerate(rows, start=1):
-        ids = sources_for(row, claims)
+    beats = group_beats(rows)
+    say("ok", "%d câu gộp thành %d nhịp, mỗi nhịp một hình giữ liên tục"
+        % (len(rows), len(beats)))
+
+    # one card per BEAT, not per sentence
+    for i, beat in enumerate(beats, start=1):
+        ids: list = []
+        for row in beat:
+            for sid in sources_for(row, claims):
+                if sid not in ids:
+                    ids.append(sid)
         used.update(ids)
         seen: list = []
         for sid in ids:
@@ -300,20 +334,30 @@ def render(script: dict, claims: dict, sources: dict, brief: dict, outdir: Path,
             if label not in seen:
                 seen.append(label)
 
+        spoken = " ".join((r.get("loi") or "").strip() for r in beat if (r.get("loi") or "").strip())
+        secs = sum(float(r.get("dur") or 0) for r in beat)
         png = work / ("c%03d.png" % i)
         aud = work / ("c%03d.mp3" % i)
         clip = work / ("c%03d.mp4" % i)
-        cards.card(bg=(backgrounds.get(row.get("sec")) or {}).get("image"),
-                   eyebrow=names.get(row.get("sec"), ""),
-                   title=(row.get("chu") or "").strip(),
-                   caption=(row.get("loi") or "").strip(),
-                   footer_left=("Nguồn: " + ", ".join(seen[:3])) if seen
-                               else "Câu chuyển, không cần nguồn",
-                   footer_right="%d / %d" % (i, len(rows))).save(png)
-        speak(row.get("loi") or "", voice_id, aud, seconds=float(row.get("dur") or 2.5))
-        motion.ken_burns(str(png), str(aud), str(clip), zoom_in=(i % 2 == 1))
+        bg_img, tx_img = cards.card(
+            bg=(backgrounds.get(beat[0].get("sec")) or {}).get("image"),
+            eyebrow=names.get(beat[0].get("sec"), ""),
+            title=(beat[0].get("chu") or "").strip(),
+            caption=spoken,
+            caption_lines=5,
+            footer_left=("Nguồn: " + ", ".join(seen[:3])) if seen else "",
+            footer_right="%d / %d" % (i, len(beats)),
+            want_layers=True)
+        txt = work / ("t%03d.png" % i)
+        bg_img.save(png); tx_img.save(txt)
+        # One voice call for the whole beat, so the sentences run together as speech
+        # instead of being cut apart into one clip each.
+        speak(spoken, voice_id, aud, seconds=max(2.0, secs))
+        motion.ken_burns_reveal(str(png), str(txt), str(aud), str(clip),
+                                zoom_in=(i % 2 == 1))
         parts.append(clip)
-        say("ok", "Câu %d trên %d: có tiếng, hình và chuyển động" % (i, len(rows)))
+        say("ok", "Nhịp %d trên %d: %d câu, %.1f giây, chữ hiện dần trên hình đang chạy"
+            % (i, len(beats), len(beat), secs))
 
     # closing: who said what, with the ids for anyone checking
     lines = []

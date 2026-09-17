@@ -83,11 +83,9 @@ def check_script(sentences: list[dict], sections: list[dict], claims: dict,
 
         if s.get("kieu") not in KIEU:
             out.append(f"{tag}: kiểu đọc '{s.get('kieu')}' không hợp lệ, chọn một trong kể, giảng, thân mật, hỏi, chốt.")
-        if not chu:
-            out.append(f"{tag}: thiếu chữ trên màn hình.")
-        elif len(chu) > CHU_MAX:
+        if chu and len(chu) > CHU_MAX:
             out.append(f"{tag}: chữ trên màn hình dài {len(chu)} ký tự, tối đa bốn mươi.")
-        elif chu.endswith(("…", "...")) or re.search(r"\w-$", chu):
+        elif chu and (chu.endswith(("…", "...")) or re.search(r"\w-$", chu)):
             out.append(f"{tag}: chữ trên màn hình bị cắt giữa từ, viết lại cho gọn trong bốn mươi ký tự.")
         if not (s.get("hinh") or "").strip():
             out.append(f"{tag}: thiếu ý đồ hình.")
@@ -167,6 +165,23 @@ def narrated_sourcing(sentences: list[dict]) -> list[str]:
                 "Nói thẳng nội dung, phần dẫn nguồn đã nằm ở hồ sơ nguồn rồi."
             )
     return out
+
+
+def slideshow(sentences) -> list:
+    """Too many on-screen titles and the video stops being a lecture.
+
+    A title on every sentence is what makes a film read as a deck of slides: the eye
+    keeps restarting on a new heading instead of following a spoken explanation. One
+    title per new idea is the intent, so more than two in five lines is a fault.
+    """
+    if len(sentences) < 6:
+        return []
+    titled = sum(1 for s in sentences if (s.get("chu") or "").strip())
+    if titled > 0.4 * len(sentences):
+        return ["Có %d chữ trên màn hình cho %d câu: video đang thành trình chiếu đầy "
+                "tiêu đề. Chỉ để chu ở câu mở một ý mới, các câu khác để rỗng."
+                % (titled, len(sentences))]
+    return []
 
 
 def overused_claims(sentences: list[dict], available: int) -> list[str]:

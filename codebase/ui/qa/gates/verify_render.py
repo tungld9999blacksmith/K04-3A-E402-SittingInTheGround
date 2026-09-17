@@ -54,8 +54,13 @@ if meta["bytes"] < 200_000:
 if meta["seconds"] < 14:
     fails.append("video is %.1fs; three sentences plus two cards cannot be that short"
                  % meta["seconds"])
-if meta["cards"] != 5:
-    fails.append("expected 5 clips (open + 3 + close), got %d" % meta["cards"])
+# Sentences are grouped into held beats now, so the clip count is open + beats + close
+# and MUST be fewer than one card per sentence — that was the slideshow.
+n_rows = len(SCRIPT["sentences"])
+if not 3 <= meta["cards"] <= n_rows + 1:
+    fails.append("expected between 3 and %d clips, got %d" % (n_rows + 1, meta["cards"]))
+if meta["cards"] >= n_rows + 2:
+    fails.append("one card per sentence: the beats are not being grouped")
 
 
 def probe(p):
@@ -91,7 +96,20 @@ else:
         fails.append("frames 0.7s apart from the fades differ by only %.2f: the card is "
                      "standing still" % diff)
 
-# 3. labels are publisher names, never internal ids
+# 3. the words arrive after the picture, rather than the whole frame at once
+if os.path.exists(clip):
+    band = (120, 280, 1800, 640)
+    levels = []
+    for t in (0.10, 1.60):
+        f = os.path.join(OUT, "tx_%s.png" % t)
+        subprocess.run([FF, "-y", "-v", "error", "-ss", str(t), "-i", clip,
+                        "-frames:v", "1", f], check=True)
+        levels.append(max(list(Image.open(f).convert("L").crop(band).getdata())))
+    if levels[1] - levels[0] < 60:
+        fails.append("text is already at full strength when the clip starts "
+                     "(%d then %d): it is not fading up" % tuple(levels))
+
+# 4. labels are publisher names, never internal ids
 if render.publisher(SOURCES["n01"]) != "Kubernetes":
     fails.append("n01 should read Kubernetes, got %r" % render.publisher(SOURCES["n01"]))
 if render.publisher(SOURCES["n02"]) != "Stanford":

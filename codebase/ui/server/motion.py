@@ -101,3 +101,39 @@ def silence(seconds: float, out) -> None:
            "anullsrc=channel_layout=stereo:sample_rate=24000",
            "-t", "%.3f" % max(0.8, float(seconds)), "-c:a", "libmp3lame", str(out)],
           "tao doan lang")
+
+def ken_burns_reveal(image, text, audio, out, zoom_in: bool = True, fps: int = 24) -> float:
+    """Background pushes; the words fade up into it.
+
+    The complaint that a video is "a slideshow with fade in and fade out" is a complaint
+    about the whole frame arriving at once. Separating the type from the picture lets the
+    words settle a beat after the image, which is what makes it read as something being
+    said rather than a slide being shown.
+    """
+    dur = duration_of(audio)
+    frames = max(2, round(dur * fps))
+    ramp = ("1+%.4f*on/%d" % (ZOOM, frames)) if zoom_in \
+        else ("%.4f-%.4f*on/%d" % (1 + ZOOM, ZOOM, frames))
+
+    rise, hold = 0.85, 0.22          # how long the words take to arrive, and when they start
+    graph = (
+        "[0:v]scale=3840:2160:flags=lanczos,setsar=1,"
+        "zoompan=z='%s':d=%d:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=%d"
+        "[bg];"
+        "[1:v]format=rgba,fade=t=in:st=%.2f:d=%.2f:alpha=1[tx];"
+        r"[bg][tx]overlay=x=0:y='max(0\,22-26*max(0\,t-%.2f))'[both]"
+        % (ramp, frames, fps, hold, rise, hold)
+    )
+    tail = "[both]"
+    if dur >= MIN_FADE:
+        graph += ";[both]fade=t=in:st=0:d=0.22,fade=t=out:st=%.3f:d=%.2f[v]" % (dur - FADE, FADE)
+        tail = "[v]"
+
+    _must(["-y", "-v", "error", "-loop", "1", "-i", str(image), "-loop", "1", "-i", str(text),
+           "-i", str(audio), "-filter_complex", graph,
+           "-map", tail, "-map", "2:a:0",
+           "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-r", str(fps),
+           "-c:a", "aac", "-b:a", "128k", "-ar", "24000",
+           "-t", "%.3f" % dur, "-movflags", "+faststart", str(out)],
+          "dung clip co chu hien dan")
+    return dur

@@ -626,7 +626,10 @@ RULES = (
     "- KHÔNG chữ số trong loi. Viết bằng chữ: hai nghìn, không phải 2000.\n"
     "- Không viết tắt chưa giải thích. Nghĩa tiếng Việt trước, thuật ngữ tiếng Anh nhắc "
     "một lần sau đó.\n"
-    "- chu tối đa 40 ký tự và không được cắt giữa từ; câu nào cũng phải có chu và hinh.\n"
+    "- chu là chữ hiện trên màn hình. CHỈ đặt chu ở câu MỞ một ý mới, khoảng ba đến bốn "
+    "câu mới có một chu; các câu còn lại để chu RỖNG. Đặt chu cho mọi câu thì video thành "
+    "một tập trang chiếu đầy tiêu đề, không còn là bài giảng. chu tối đa 40 ký tự, không "
+    "cắt giữa từ. hinh thì câu nào cũng phải có.\n"
     "- Mỗi loi đúng MỘT câu, một dấu kết thúc.\n"
     "- kieu là một trong: ke, giang, nhe, hoi, nhan.\n"
     "- cls là mảng mã dữ kiện câu đó dựa vào, chỉ dùng mã có trong danh sách. Câu chuyển "
@@ -640,7 +643,20 @@ RULES = (
     "nằm ở cls.\n"
     "- Không viết câu chung chung cho đủ thời lượng. Mỗi câu phải nói một điều cụ thể lấy "
     "từ dữ kiện nó dẫn, và phải đúng với nội dung dữ kiện đó.\n"
-    "- Phân bổ đều các dữ kiện, đừng dồn nhiều câu vào cùng một dữ kiện."
+    "- Phân bổ đều các dữ kiện, đừng dồn nhiều câu vào cùng một dữ kiện.\n"
+    "\n"
+    "Đây là BÀI GIẢNG NÓI, không phải danh sách dữ kiện. Cách viết:\n"
+    "- Các câu phải NỐI vào nhau. Mỗi câu tiếp lời câu trước: trả lời câu hỏi mà câu trước "
+    "vừa mở ra, hoặc nói tiếp điều câu trước vừa nhắc. Dùng từ nối tự nhiên: 'chỗ này', "
+    "'lý do là', 'ngược lại', 'vậy thì', 'đến đây'. Đọc liền cả phần phải nghe như một "
+    "người đang giảng liên tục.\n"
+    "- KHÔNG viết mỗi câu như một mục độc lập. Ba câu rời nhau về ba chuyện khác nhau là "
+    "sai, dù câu nào cũng có dữ kiện.\n"
+    "- Viết tiếng Việt như người Việt GIẢNG BÀI, không dịch theo mẫu câu tiếng Anh. Không "
+    "'Trong bài giảng này chúng ta sẽ tìm hiểu về', không 'Xin chào các bạn, hôm nay tôi "
+    "sẽ dạy các bạn về'. Vào thẳng nội dung như đang nói với người ngồi trước mặt.\n"
+    "- Mở đầu bằng một câu hỏi hoặc một tình huống cụ thể người học gặp thật, rồi mới giải "
+    "thích. Đừng mở đầu bằng định nghĩa."
 )
 
 
@@ -1024,7 +1040,8 @@ def do_write(body):
     problems = (validate.check_script(sentences, sections, claims, target)
                 + validate.uncited_assertions(sentences)
                 + validate.overused_claims(sentences, len(usable))
-                + validate.narrated_sourcing(sentences))
+                + validate.narrated_sourcing(sentences)
+                + validate.slideshow(sentences))
     while problems and passes < 3 and len(calls) < RUN_BUDGET["n"]:
         passes += 1
         emit("caution", "T\u1ef1 ki\u1ec3m l\u01b0\u1ee3t %d: %d l\u1ed7i, vi\u1ebft l\u1ea1i" % (passes, len(problems)))
@@ -1032,7 +1049,8 @@ def do_write(body):
         problems = (validate.check_script(sentences, sections, claims, target)
                     + validate.uncited_assertions(sentences)
                     + validate.overused_claims(sentences, len(usable))
-                + validate.narrated_sourcing(sentences))
+                + validate.narrated_sourcing(sentences)
+                + validate.slideshow(sentences))
 
     total = round(sum(s["dur"] for s in sentences), 1)
     if problems:
