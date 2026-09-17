@@ -1,5 +1,7 @@
-SPEC — Agent tự tìm tài liệu và viết kịch bản video có dẫn nguồn · Nhóm Sitting on the Ground · Zone C4
+## SPEC — Agent tự tìm tài liệu và viết kịch bản video có dẫn nguồn · Nhóm Sitting on the Ground · Zone C4
+<br>
 Hướng: [ ] A — VLearn  [ ] B — Trợ lý Học viên  [X] C — Làn mở
+<br>
 Loại: [X] Tối ưu tính năng có sẵn  [X] Tính năng mới
 
 ---
@@ -17,30 +19,31 @@ Loại: [X] Tối ưu tính năng có sẵn  [X] Tính năng mới
   7. Xuất kịch bản và hồ sơ nguồn.
 
 <img width="950" height="1250" alt="image" src="https://github.com/user-attachments/assets/b0e3b1ec-a22e-4664-a09b-63a9a7ddcb1d" />
+
 - **Core JTBD:**  
   > Khi chuẩn bị một video bài giảng, tôi muốn nhanh chóng tìm và kiểm chứng các tài liệu liên quan rồi chuyển chúng thành một kịch bản nói tự nhiên, để tôi có thể duyệt nội dung và truy ngược từng thông tin quan trọng về bằng chứng gốc trước khi quay.
 
 - **Problem statement:**  
   > Người viết kịch bản phải mất nhiều thời gian để tìm, đọc, đánh giá và tổng hợp tài liệu; đồng thời người duyệt khó xác định từng thông tin trong kịch bản đến từ đâu. Điều này làm tăng thời gian biên soạn và nguy cơ sử dụng thông tin cũ, số liệu chưa được kiểm chứng hoặc ví dụ không có căn cứ.
 
-- **Anh Tài SG:** Kịch bản cần chi tiết; tài liệu phải chuẩn và có nguồn uy tín.
-- **Anh Hải — Lead team video:** Tìm nguồn và viết kịch bản mất thời gian; quy trình hiện tại chủ yếu làm thủ công từ slide/lecture; cần hỗ trợ viết mở đầu và chuyển cảnh.
-- **Xuân Tài:** Cần so sánh hình ảnh với tài liệu và vẫn cần human review.
-- **An:** Cần review nguồn, nội dung cốt lõi, style diễn đạt, độ dễ hiểu và các rule trình bày. Khác gì GPT, Vlearn.
-
+- **Evidence (chuẩn A và/hoặc B — log đầy đủ trong repo):**
+- **Số liệu mining / kết quả khảo sát (n = 4):**
+  - **Anh Tài SG:** Kịch bản cần chi tiết; tài liệu phải chuẩn và có nguồn uy tín.
+  - **Anh Hải — Lead team video:** Tìm nguồn và viết kịch bản mất thời gian; quy trình hiện tại chủ yếu làm thủ công từ slide/lecture; cần hỗ trợ viết mở đầu và chuyển cảnh.
+  - **Xuân Tài:** Cần so sánh hình ảnh với tài liệu và vẫn cần human review.
+  - **An:** Cần review nguồn, nội dung cốt lõi, style diễn đạt, độ dễ hiểu và các rule trình bày. Khác gì GPT, Vlearn.
 > **Lưu ý:** Các nội dung trên hiện là ghi chép/diễn giải. Quote nguyên văn, ngày phỏng vấn và vai trò cụ thể cần được bổ sung trong `evidence/interview-log.md`.
 
   - **Evidence từ đề C3:** bài toán được mô tả là quy trình người biên soạn phải tự đọc tài liệu, tự tra cứu và tự viết; thời gian có thể kéo dài nhiều ngày. Đây là evidence từ brief, không thay thế user research của nhóm.
-  - ≥5 quote/ví dụ nguyên văn + nguồn:
-| Evidence | Kết quả |
-|---|---|
-| Số người phỏng vấn | 7 |
-| Số người xác nhận khó khăn tìm nguồn/viết kịch bản | 6 |
-| Số người nhấn mạnh cần nguồn uy tín | 7 |
-| Số người yêu cầu human review | 7 |
-| Số ví dụ mining từ transcript/slide | 4 |
-| Thời gian trung bình viết một kịch bản hiện tại | hours, cho mỗi 5-10ph slide |
+  - **≥5 quote/ví dụ nguyên văn + nguồn:**
 
+    | Evidence | Kết quả |
+    |---|---|
+    | Số người phỏng vấn |  |
+    | Số người xác nhận khó khăn tìm nguồn/viết kịch bản | 3 |
+    | Số người nhấn mạnh cần nguồn uy tín | 4 |
+    | Số người yêu cầu human review | 4 |
+    | Số ví dụ mining từ transcript/slide | 4 |
 ---
 
 ## §2. Impact & quyết định chọn
