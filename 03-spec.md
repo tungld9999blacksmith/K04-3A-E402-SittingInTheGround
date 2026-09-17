@@ -39,7 +39,7 @@ Loại: [X] Tối ưu tính năng có sẵn  [X] Tính năng mới
 
     | Evidence | Kết quả |
     |---|---|
-    | Số người phỏng vấn |  |
+    | Số người phỏng vấn | 4 |
     | Số người xác nhận khó khăn tìm nguồn/viết kịch bản | 3 |
     | Số người nhấn mạnh cần nguồn uy tín | 4 |
     | Số người yêu cầu human review | 4 |
