@@ -23,8 +23,6 @@ Loại: [X] Tối ưu tính năng có sẵn  [X] Tính năng mới
 - **Problem statement:**  
   > Người viết kịch bản phải mất nhiều thời gian để tìm, đọc, đánh giá và tổng hợp tài liệu; đồng thời người duyệt khó xác định từng thông tin trong kịch bản đến từ đâu. Điều này làm tăng thời gian biên soạn và nguy cơ sử dụng thông tin cũ, số liệu chưa được kiểm chứng hoặc ví dụ không có căn cứ.
 
-- **Evidence (chuẩn A và/hoặc B — log đầy đủ trong repo):**
-  - Số liệu mining / khảo sát: **[TODO — điền n và % xác nhận từ khảo sát/mining của nhóm]**
 - **Anh Tài SG:** Kịch bản cần chi tiết; tài liệu phải chuẩn và có nguồn uy tín.
 - **Anh Hải — Lead team video:** Tìm nguồn và viết kịch bản mất thời gian; quy trình hiện tại chủ yếu làm thủ công từ slide/lecture; cần hỗ trợ viết mở đầu và chuyển cảnh.
 - **Xuân Tài:** Cần so sánh hình ảnh với tài liệu và vẫn cần human review.
