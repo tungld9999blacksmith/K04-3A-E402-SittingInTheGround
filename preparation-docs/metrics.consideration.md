@@ -1,32 +1,3 @@
-Read , lines 250 to 360
-Completed with input: {
-  "path": "C:\\Users\\Admin\\Desktop\\ai-app-lab\\L5-D5-L5\\K4-3A-Day05-06-AI-Product-Hackathon.worktrees\\canvas-track-c3-implementation\\tracks\\track-c-lesson-studio.md",
-  "view_range": [
-    250,
-    360
-  ]
-}
-
-Read , lines 1 to 220
-Completed with input: {
-  "path": "C:\\Users\\Admin\\Desktop\\ai-app-lab\\L5-D5-L5\\K4-3A-Day05-06-AI-Product-Hackathon.worktrees\\canvas-track-c3-implementation\\data\\studio-pack\\c3-scriptscout\\README.md",
-  "view_range": [
-    1,
-    220
-  ]
-}
-
-Read , lines 90 to 180
-Completed with input: {
-  "path": "C:\\Users\\Admin\\Desktop\\ai-app-lab\\L5-D5-L5\\K4-3A-Day05-06-AI-Product-Hackathon.worktrees\\canvas-track-c3-implementation\\README.md",
-  "view_range": [
-    90,
-    180
-  ]
-}
-
-Để qua **CP3**, nhóm nên có một bộ test nhỏ, số đo rõ ràng và quay video cho thấy sản phẩm chạy thật. Với C3 – ScriptScout, không nên chỉ đo “AI viết hay”, mà nên đo **nguồn có đúng không, câu có truy được không, và người duyệt có kiểm soát được không**.
-
 ## 1. Bộ test đề xuất
 
 Chuẩn bị khoảng **20 case**, chia thành các nhóm:
