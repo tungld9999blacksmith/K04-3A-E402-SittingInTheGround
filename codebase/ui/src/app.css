@@ -41,6 +41,20 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .top .crumb::before { content: "/"; margin-right: var(--s2); opacity: .5; }
 .top .crumb:empty { display: none; }
 
+/* The exit lives under the script, so it reads as the end of the artifact rather than
+   another control in the rail. */
+.finish { display: flex; align-items: center; justify-content: space-between; gap: var(--s4);
+  flex-wrap: wrap; padding: var(--s4) var(--s5); border-top: 1px solid var(--line);
+  background: var(--navy-tint); border-radius: 0 0 var(--r-panel) var(--r-panel); }
+.finish .acts { display: flex; align-items: center; gap: var(--s3); }
+
+.qnav { display: flex; align-items: center; gap: var(--s3); margin: var(--s2) 0 var(--s3); }
+.qnav .btn[disabled] { opacity: .4; pointer-events: none; }
+
+.art.vid video { display: block; width: 100%; background: #000;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.art.vid .artf { align-items: center; }
+
 .list { width: 100%; max-width: 900px; margin: 0 auto; padding: var(--s6) var(--s5) var(--s7); display: flex; flex-direction: column; gap: var(--s4); }
 .list .s { cursor: pointer; }
 .top .meta { font: var(--t-meta); color: var(--rail-dim); }

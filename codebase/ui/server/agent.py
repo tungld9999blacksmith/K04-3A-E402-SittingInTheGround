@@ -26,10 +26,12 @@ import time
 import unicodedata
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import validate                       # the mechanical judge, see server/validate.py
+import render                         # turns an approved script into an mp4
 
 PORT = int(os.getenv("PORT", "8787"))
 # Set GEMINI_USD_PER_MTOK to report money. Left unset, the run reports tokens and
@@ -93,8 +95,31 @@ def usage_report() -> dict:
     return out
 
 
-def gemini(prompt: str, schema_hint: str) -> dict:
-    """One call, JSON back. Asking for a JSON mime type beats scraping code fences."""
+def first_json(text: str):
+    """Parse the first complete JSON value and ignore whatever trails it.
+
+    A real answer arrived as two JSON documents back to back, which made json.loads raise
+    "Extra data" and killed a whole research run. A greedy regex does not help: it spans
+    both documents and fails the same way. raw_decode stops at the end of the first value.
+    """
+    dec = json.JSONDecoder()
+    for i, ch in enumerate(text or ""):
+        if ch in "{[":
+            try:
+                value, _ = dec.raw_decode(text[i:])
+                return value
+            except json.JSONDecodeError:
+                continue
+    raise RuntimeError("Mô hình không trả về JSON hợp lệ.")
+
+
+def gemini(prompt: str, schema_hint: str, attempts: int = 2) -> dict:
+    """One call, JSON back, with one retry.
+
+    Asking for a JSON mime type beats scraping code fences. The retry is not optimism:
+    a malformed answer and a transient refusal both look the same from here, and both are
+    usually gone on the second ask. Two attempts, then the error reaches the reviewer.
+    """
     from google import genai
     from google.genai import types
 
@@ -103,23 +128,29 @@ def gemini(prompt: str, schema_hint: str) -> dict:
         raise RuntimeError("Thiếu GEMINI_API_KEY.")
     client = genai.Client(api_key=key)
     full = prompt + "\n\nTrả về đúng JSON theo hình dạng sau, không thêm chữ nào khác:\n" + schema_hint
-    r = client.models.generate_content(
-        model=MODEL,
-        contents=full,
-        config=types.GenerateContentConfig(response_mime_type="application/json"),
-    )
-    USAGE["calls"] += 1
-    meta = getattr(r, "usage_metadata", None)
-    if meta is not None:
-        USAGE["tokens"] += int(getattr(meta, "total_token_count", 0) or 0)
-    text = (r.text or "").strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = re.search(r"[\{\[].*[\}\]]", text, re.DOTALL)
-        if not m:
-            raise RuntimeError("Mô hình không trả về JSON hợp lệ.")
-        return json.loads(m.group(0))
+
+    last: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            r = client.models.generate_content(
+                model=MODEL,
+                contents=full,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            USAGE["calls"] += 1
+            meta = getattr(r, "usage_metadata", None)
+            if meta is not None:
+                USAGE["tokens"] += int(getattr(meta, "total_token_count", 0) or 0)
+            return first_json((r.text or "").strip())
+        except Exception as exc:                      # parse failure or transient refusal
+            last = exc
+            if attempt < attempts:
+                if "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
+                    emit("caution", "Bị chặn tốc độ, chờ một nhịp rồi thử lại")
+                    time.sleep(3)
+                else:
+                    emit("caution", "Câu trả lời không đọc được, hỏi lại một lần")
+    raise RuntimeError(str(last))
 
 
 def tavily(query: str, k: int = 5) -> list[dict]:
@@ -1001,6 +1032,30 @@ def do_rewrite(body: dict) -> dict:
             "usage": usage_report()}
 
 
+def do_render(body: dict) -> dict:
+    """The end of the cycle: an approved script becomes a video file on this machine."""
+    sess = session_of(body)
+    script = body.get("script") or (sess.script if sess else None)
+    if not script or not (script.get("sentences") or []):
+        raise RuntimeError("Chưa có kịch bản để dựng.")
+    claims = body.get("claims") or (sess.claims if sess else {}) or {}
+    sources = body.get("sources") or (sess.sources if sess else {}) or {}
+    brief = body.get("brief") or (sess.brief if sess else {}) or {}
+    name = (sess.id if sess else "phien") or "phien"
+
+    RUN_START["t"] = time.monotonic()
+    outdir = Path("out") / name
+    emit("ok", "Bắt đầu dựng video, không dùng mô hình sinh video, chỉ chữ và hình")
+    info = render.render(script, claims, sources, brief, outdir,
+                         voice=body.get("voice") or "nu",
+                         on_line=lambda kind, text: emit(kind, text))
+    if sess:
+        sess.state = "xong"
+    seconds = round(sum(float(r.get("dur") or 0) for r in script["sentences"]), 1)
+    return {"url": f"/video/{name}.mp4", "bytes": info["bytes"], "cards": info["cards"],
+            "seconds": seconds, "voice": info["voice"], "sources": info["sources"]}
+
+
 def do_add_source(body: dict) -> dict:
     """The reviewer found a page themselves. It gets scored exactly like one we found."""
     url = (body.get("url") or "").strip()
@@ -1111,8 +1166,10 @@ class Handler(BaseHTTPRequestHandler):
                 "meta": s.meta(), "brief": s.brief, "sources": s.sources,
                 "claims": s.claims, "script": s.script, "cost": None,
             })
+        if path.startswith("/video/"):
+            return self.serve_video(path)
         if path in ("/research/stream", "/write/stream", "/rewrite/stream",
-                    "/sources/stream"):
+                    "/sources/stream", "/render/stream"):
             return self.stream()
         return self.reply(404, {"error": "Không có đường dẫn này."})
 
@@ -1134,6 +1191,50 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except OSError:
                 return
+
+
+    def serve_video(self, path: str):
+        """Range requests matter: without them the player cannot seek and some browsers
+        refuse to start at all."""
+        name = os.path.basename(path)[:-4] if path.endswith(".mp4") else os.path.basename(path)
+        f = Path("out") / re.sub(r"[^A-Za-z0-9._-]", "", name) / "video.mp4"
+        if not f.exists():
+            return self.reply(404, {"error": "Chưa dựng video cho phiên này."})
+        size = f.stat().st_size
+        start, end = 0, size - 1
+        rng = self.headers.get("range") or ""
+        m = re.match(r"bytes=(\d*)-(\d*)", rng)
+        partial = False
+        if m and (m.group(1) or m.group(2)):
+            partial = True
+            if m.group(1):
+                start = int(m.group(1))
+                if m.group(2):
+                    end = min(int(m.group(2)), size - 1)
+            else:
+                start = max(0, size - int(m.group(2)))
+        length = max(0, end - start + 1)
+
+        self.send_response(206 if partial else 200)
+        self.send_header("content-type", "video/mp4")
+        self.send_header("accept-ranges", "bytes")
+        self.send_header("content-length", str(length))
+        if partial:
+            self.send_header("content-range", f"bytes {start}-{end}/{size}")
+        self.cors()
+        self.end_headers()
+        with f.open("rb") as fh:
+            fh.seek(start)
+            left = length
+            while left > 0:
+                chunk = fh.read(min(262144, left))
+                if not chunk:
+                    break
+                try:
+                    self.wfile.write(chunk)
+                except OSError:
+                    return
+                left -= len(chunk)
 
     def do_POST(self):
         path = self.path.split("?")[0].rstrip("/")
@@ -1190,6 +1291,12 @@ class Handler(BaseHTTPRequestHandler):
                 if sess and sess.script:
                     sess.script = {"sections": sess.script["sections"],
                                    "sentences": out["sentences"]}
+                TRACE.put(None)
+                return self.reply(200, out)
+            if path == "/render":
+                while not TRACE.empty():
+                    TRACE.get_nowait()
+                out = do_render(body)
                 TRACE.put(None)
                 return self.reply(200, out)
             if path == "/conflict":

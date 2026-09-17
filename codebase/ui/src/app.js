@@ -232,6 +232,73 @@
       .catch(fail);
   }
 
+  /* Stepping the queue focuses the sentence the decision is about. A counter that moves
+     while the script sits still would tell the reviewer nothing. */
+  function queueStep(delta) {
+    var st = S.get();
+    var open = Object.keys(st.claims).filter(function (cid) {
+      var c = st.claims[cid];
+      if (c.state === "mauthuan") return !st.conflictChoice[cid];
+      return c.state === "chuaxacminh" && !S.claimDead(cid);
+    });
+    if (!open.length) return;
+    var at = Math.max(0, Math.min((st.queueAt || 0) + delta, open.length - 1));
+    /* The queue lives in the dossier pane, so stepping must not switch away from it. */
+    S.set({ queueAt: at, inspect: "dossier" });
+    var cid = open[at];
+    var row = S.rows().filter(function (r) { return r.cls.indexOf(cid) >= 0; })[0];
+    if (row) S.set({ focus: row.n });
+  }
+
+  /* The end of the cycle. Unresolved decisions do not block it: the reviewer is told
+     what is still open and chooses, which is the whole point of a human gate. */
+  function finish(force) {
+    var st = S.get();
+    if (!st.script) return;
+    var open = Object.keys(st.claims).filter(function (cid) {
+      var c = st.claims[cid];
+      if (c.state === "mauthuan") return !st.conflictChoice[cid];
+      return c.state === "chuaxacminh" && !S.claimDead(cid);
+    });
+    if (open.length && !force) {
+      S.push({ role: "agent", kind: "text", html:
+        '<div class="note g">' + V.icons.warn + "<span>Còn " + open.length +
+        " dữ kiện chưa quyết. Chốt luôn thì những câu dựa vào chúng vẫn vào video, " +
+        "kèm dấu cảnh báo trong hồ sơ nguồn.</span></div>" +
+        '<div class="acts"><button class="btn pri" data-act="finish-force">Chốt luôn</button>' +
+        '<button class="btn quiet" data-act="q-next">Xem việc cần quyết</button></div>' });
+      toBottom();
+      return;
+    }
+
+    S.set({ busy: true });
+    var msg = S.push({ role: "agent", kind: "trace", lead: "Chốt kịch bản. Dựng video tại máy.", lines: [], pct: 0 });
+    toBottom();
+
+    A.render({ session: sid(), script: st.script, claims: st.claims, sources: st.sources,
+               brief: st.brief, voice: "nu" }, function (line) {
+      msg.lines.push(line);
+      msg.pct = Math.min(96, Math.round(100 - 100 / (1 + msg.lines.length / 3)));
+      S.set({});
+      toBottom();
+    })
+      .then(function (r) {
+        msg.pct = 100;
+        S.set({ busy: false, video: r, phase: "done" });
+        var m = S.get().meta;
+        if (m) {
+          var done = Object.assign({}, m, { state: "xong" });
+          S.set({ meta: done, sessions: S.get().sessions.map(function (x) {
+            return x.id === done.id ? done : x;
+          }) });
+        }
+        S.push({ role: "agent", kind: "video", url: r.url, bytes: r.bytes,
+                 cards: r.cards, seconds: r.seconds, voice: r.voice });
+        toBottom();
+      })
+      .catch(fail);
+  }
+
   /* ---------- review ---------- */
   function kill(cid) {
     var k = JSON.parse(JSON.stringify(S.get().killed));
@@ -343,6 +410,10 @@
     if (d.open) { openSession(d.open); return; }
     if (d.filter) { S.set({ filter: d.filter }); return; }
     if (d.act === "new") { newSession(); return; }
+    if (d.act === "q-next") { queueStep(1); return; }
+    if (d.act === "q-prev") { queueStep(-1); return; }
+    if (d.act === "finish") { finish(false); return; }
+    if (d.act === "finish-force") { finish(true); return; }
     if (t.id === "send") { say($("say").value); $("say").value = ""; return; }
     if (d.chip) { say(d.chip); return; }
     if (d.tab) { S.set({ inspect: d.tab }); return; }

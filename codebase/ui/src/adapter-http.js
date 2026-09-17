@@ -17,6 +17,8 @@
      POST {base}/write            {claims, brief, targetSeconds}  -> {sections, sentences}
      POST {base}/rewrite          {sentences, killed}             -> {sentences, changed}
      POST {base}/sources          {url, note}                     -> {id, source}
+     POST {base}/render           {session, voice}                -> {url, bytes, cards, seconds}
+     GET  {base}/video/{id}.mp4   the rendered file, honours Range requests
      POST {base}/conflict         {claimId, choice}                -> {claimId, choice}
 
    Progress for research and rewrite streams from:
@@ -79,6 +81,7 @@ window.HttpAdapter = function (base) {
 
   return {
     name: "http:" + base,
+    base: base,                 /* the video element needs an absolute source */
 
     listSessions: function () { return get("/sessions"); },
     openSession: function (req) { return get("/sessions/" + encodeURIComponent(req.id)); },
@@ -100,6 +103,10 @@ window.HttpAdapter = function (base) {
     },
 
     addSource: function (req) { return post("/sources", req); },
+
+    render: function (req, onEvent) {
+      return withStream("/render/stream", function () { return post("/render", req); }, onEvent);
+    },
     resolveConflict: function (req) { return post("/conflict", req); }
   };
 };

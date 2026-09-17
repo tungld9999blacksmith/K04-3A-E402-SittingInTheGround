@@ -5,3 +5,4 @@ qa/shots/
 .gstack/
 __pycache__/
 *.pyc
+out/

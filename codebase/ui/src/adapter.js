@@ -22,7 +22,7 @@ window.Adapter = (function () {
 
   if (api && window.HttpAdapter) {
     var http = window.HttpAdapter(api);
-    var wrapped = { name: http.name };
+    var wrapped = { name: http.name, base: http.base };
 
     /* Two ways a backend lets you down, and neither should brick a demo:
        it has not implemented a method yet, or it is not answering at all. Either way the
@@ -33,7 +33,12 @@ window.Adapter = (function () {
       wrapped[k] = function (req, onEvent) {
         return http[k](req, onEvent).catch(function (err) {
           window.API_DOWN = err && err.message || String(err);
-          return window.MockAdapter[k](req, onEvent);
+          /* If the mock cannot stand in either, the reviewer needs the SERVER's reason,
+             not the mock's. Reporting "cần máy chủ thật" when the server answered and
+             failed sent me hunting the wrong bug. */
+          return Promise.resolve()
+            .then(function () { return window.MockAdapter[k](req, onEvent); })
+            .catch(function () { throw err; });
         });
       };
     });

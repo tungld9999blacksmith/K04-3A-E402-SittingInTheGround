@@ -147,6 +147,14 @@ window.MockAdapter = (function () {
       });
     },
 
+    /* No mock video: a fake file would be worse than an honest refusal. */
+    render: function (req, onEvent) {
+      if (onEvent) onEvent({ t: 0, kind: "caution", text: "Bản mô phỏng không dựng được video." });
+      return wait(200).then(function () {
+        throw new Error("Cần máy chủ thật để dựng video. Chạy server/agent.py rồi thử lại.");
+      });
+    },
+
     resolveConflict: function (req) {
       return wait(300).then(function () {
         return { claimId: req.claimId, choice: req.choice };
