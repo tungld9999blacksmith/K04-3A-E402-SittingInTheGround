@@ -88,7 +88,8 @@ window.MockAdapter = (function () {
       });
     },
 
-    write: function () {
+    write: function (req, onEvent) {
+      if (onEvent) onEvent({ t: 0, kind: "ok", text: "Viết kịch bản từ dữ kiện đã duyệt" });
       return wait(340).then(function () {
         return {
           sections: clone(F.sections),

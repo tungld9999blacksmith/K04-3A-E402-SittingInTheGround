@@ -94,6 +94,19 @@
     A.clarify({ brief: st.brief, answers: st.answers, askedUpTo: st.askedUpTo })
       .then(function (r) {
         S.set({ busy: false, askedUpTo: r.askedUpTo, chips: r.chips || [] });
+
+        /* The agent heard a duration, so the brief must carry it. Without this the script
+           is written against the session default and ignores what was actually asked. */
+        if (r.targetSeconds && S.get().brief && r.targetSeconds !== S.get().brief.targetSeconds) {
+          S.set({ brief: Object.assign({}, S.get().brief, {
+            targetSeconds: r.targetSeconds,
+            duration: r.targetSeconds >= 60
+              ? Math.round(r.targetSeconds / 60) + " phút"
+              : Math.round(r.targetSeconds) + " giây"
+          }) });
+          var mt = S.get().meta;
+          if (mt) S.set({ meta: Object.assign({}, mt, { target: r.targetSeconds }) });
+        }
         if (r.ack) S.push({ role: "agent", kind: "text", html: "<p>" + V.esc(r.ack) + "</p>" });
         if (r.questions && r.questions.length) {
           S.push({ role: "agent", kind: "text", html: questionList(r.questions) });
@@ -119,6 +132,40 @@
       .catch(fail);
   }
 
+  /* Describes what actually came back. This line used to be a fixed string that claimed
+     five sentences and four sources whatever the result was, which made a real run look
+     rehearsed. Nothing here is allowed to be a guess. */
+  function summarise(w) {
+    var st = S.get();
+    var rows = w.sentences || [];
+    var total = 0, cited = {};
+    rows.forEach(function (r) {
+      total += r.dur || 0;
+      (r.cls || []).forEach(function (c) {
+        (st.claims[c] && st.claims[c].evidence || []).forEach(function (e) { cited[e.src] = true; });
+      });
+    });
+    var target = st.brief && st.brief.targetSeconds;
+    var bits = [rows.length + " câu", Object.keys(cited).length + " nguồn",
+                V.vn(total) + " giây"];
+    if (target) {
+      var drift = total - target;
+      bits.push(Math.abs(drift) / target <= 0.15 ? "đúng mục tiêu"
+        : (drift < 0 ? "ngắn hơn" : "dài hơn") + " mục tiêu "
+          + Math.round(Math.abs(drift)) + " giây");
+    }
+    if (w.passes) bits.push("sau " + w.passes + " lượt tự kiểm");
+    var open = Object.keys(st.claims).filter(function (c) {
+      var x = st.claims[c];
+      return x.state === "mauthuan" || x.state === "chuaxacminh";
+    }).length;
+    if (open) bits.push(open + " dữ kiện còn phải quyết");
+    if (w.remaining && w.remaining.length) {
+      bits.push("còn " + w.remaining.length + " điểm chưa đạt");
+    }
+    return "Xong. " + bits.join(", ") + ".";
+  }
+
   /* ---------- research ---------- */
   function approve() {
     var st = S.get();
@@ -126,22 +173,36 @@
     S.set({ phase: "researching", busy: true });
 
     var msg = S.push({ role: "agent", kind: "trace", lead: "Bắt đầu tìm.", lines: [], pct: 0 });
-    var total = F.trace.length;
     toBottom();
 
     A.research({ plan: st.plan, brief: st.brief }, function (line) {
       msg.lines.push(line);
-      msg.pct = Math.round((msg.lines.length / total) * 100);
+      /* A real run does not announce how many steps it will take, so the bar approaches
+         the end without ever claiming to have arrived. It used to divide by the fixture's
+         step count, which is meaningless against any other backend. */
+      msg.pct = Math.min(95, Math.round(100 - 100 / (1 + msg.lines.length / 4)));
       S.set({});
       toBottom();
     })
       .then(function (r) {
         S.set({ sources: r.sources, claims: r.claims, cost: r.cost == null ? null : r.cost });
-        return A.write({ claims: r.claims, brief: st.brief, targetSeconds: st.brief.targetSeconds });
+        /* Writing is the part that iterates, so it reports into the same trace the
+           search was reporting into. Silence here read as a hang. */
+        return A.write({ claims: r.claims, brief: st.brief, targetSeconds: st.brief.targetSeconds },
+          function (line) {
+            msg.lines.push(line);
+            msg.pct = Math.min(98, Math.round(100 - 100 / (1 + msg.lines.length / 4)));
+            S.set({});
+            toBottom();
+          });
       })
       .then(function (w) {
+        msg.pct = 100;
+        /* The backend may have gone back for more sources while writing. */
+        if (w.claims) S.set({ claims: Object.assign({}, S.get().claims, w.claims) });
+        if (w.sources) S.set({ sources: Object.assign({}, S.get().sources, w.sources) });
         S.set({ busy: false, phase: "script", script: w, baseline: JSON.parse(JSON.stringify(w)), focus: 3 });
-        S.push({ role: "agent", kind: "script", lead: "Xong. Năm câu, bốn nguồn. Dài hơn mục tiêu một chút, và một con số chưa xác minh." });
+        S.push({ role: "agent", kind: "script", lead: summarise(w) });
         toBottom();
       })
       .catch(fail);

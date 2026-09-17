@@ -21,6 +21,7 @@
 
    Progress for research and rewrite streams from:
      GET  {base}/research/stream  text/event-stream, one JSON line per trace entry
+     GET  {base}/write/stream     same, one line per section written and per self-check pass
      GET  {base}/rewrite/stream   same
    If the stream is unavailable the call still resolves; the trace simply arrives at once.
 
@@ -90,7 +91,9 @@ window.HttpAdapter = function (base) {
       return withStream("/research/stream", function () { return post("/research", req); }, onEvent);
     },
 
-    write: function (req) { return post("/write", req); },
+    write: function (req, onEvent) {
+      return withStream("/write/stream", function () { return post("/write", req); }, onEvent);
+    },
 
     rewrite: function (req, onEvent) {
       return withStream("/rewrite/stream", function () { return post("/rewrite", req); }, onEvent);
