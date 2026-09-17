@@ -103,7 +103,7 @@ Copy-Item .env.example .env
 Fixture mode giúp quay flow ổn định mà không tốn API:
 
 ```powershell
-streamlit run codebase/app.py
+python -m streamlit run codebase/app.py
 ```
 
 Chọn `Dùng fixture...` để test human gate. Đây là chế độ kiểm tra flow, không thay
@@ -116,7 +116,7 @@ cho demo AI thật.
 ```powershell
 $env:GEMINI_API_KEY="..."
 $env:TAVILY_API_KEY="..."
-streamlit run codebase/app.py
+python -m streamlit run codebase/app.py
 ```
 
 Khi demo, kiểm tra `logs/latest_run.json` để chứng minh request/response đã được ghi.
