@@ -12,6 +12,7 @@ does not say what to do about it is wasted.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 KIEU = {"ke", "giang", "nhe", "hoi", "nhan"}
 SYLLABLES_PER_SECOND = 2.9
@@ -163,6 +164,56 @@ def narrated_sourcing(sentences: list[dict]) -> list[str]:
             out.append(
                 f"Câu {s.get('n')}: lời đọc tự kể nguồn ('{m.group(0)}'). "
                 "Nói thẳng nội dung, phần dẫn nguồn đã nằm ở hồ sơ nguồn rồi."
+            )
+    return out
+
+
+NOISE = set(
+    "la cua va co the mot nhung khi cho den nay ra vao voi tu nhu hay thi ma nen neu se "
+    "da bi duoc cac tren duoi rat con chi cung nay do khi ban chung ta hay bat dau".split()
+)
+
+
+def _content_words(text: str) -> set:
+    """Words that carry meaning, with tone marks stripped so spellings line up."""
+    flat = unicodedata.normalize("NFD", (text or "").lower())
+    flat = "".join(c for c in flat if unicodedata.category(c) != "Mn")
+    return {w for w in re.findall(r"[a-z]{3,}", flat)} - NOISE
+
+
+def citation_drift(sentences, claims) -> list:
+    """A sentence wearing a citation that shares nothing with the claim it cites.
+
+    This is the one place the guarantee actually breaks in practice. A real run produced
+    "Chúng ta hãy bắt đầu tìm hiểu về công nghệ này." carrying claim t07 about what
+    Kubernetes is — a sentence with no factual content, dressed as evidenced, counted
+    green on the coverage bar. `uncited_assertions` cannot see it because the sentence IS
+    cited, and `overused_claims` only counts how often a claim is used.
+
+    The machine still cannot read meaning. But a cited sentence that shares not one
+    content word with any claim it cites is either a transition that should carry no
+    citation at all, or a sentence that has drifted off the evidence — and both are worth
+    stopping on.
+    """
+    out = []
+    for s in sentences:
+        cited = [c for c in (s.get("cls") or []) if claims.get(c)]
+        if not cited:
+            continue
+        mine = _content_words(s.get("loi"))
+        if not mine:
+            continue
+        best = 0.0
+        for cid in cited:
+            theirs = _content_words((claims.get(cid) or {}).get("text"))
+            if theirs:
+                best = max(best, len(mine & theirs) / len(theirs))
+        if best == 0.0:
+            out.append(
+                "Câu %s: dẫn %s nhưng không dùng chung một từ nội dung nào với dữ kiện đó. "
+                "Nếu đây là câu chuyển thì bỏ hẳn mã dữ kiện và viết ngắn lại; nếu định nói "
+                "nội dung của dữ kiện thì nói thẳng nội dung đó."
+                % (s.get("n"), ", ".join(cited))
             )
     return out
 

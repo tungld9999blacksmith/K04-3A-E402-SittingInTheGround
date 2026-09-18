@@ -323,6 +323,14 @@ REQUIRED = [
 ]
 
 
+NON_ANSWERS = (
+    "ai cung duoc", "ai cũng được", "gi cung duoc", "gì cũng được", "sao cung duoc",
+    "sao cũng được", "tuy", "tùy", "khong can", "không cần", "khong biet", "không biết",
+    "bat ky", "bất kỳ", "moi nguoi", "mọi người", "khong ro", "không rõ", "chua biet",
+    "chưa biết", "n/a", "na", "none", "any", "anyone", "whatever",
+)
+
+
 def _stated(field: str, value) -> bool:
     """Whether a field has a real answer, as opposed to something or nothing."""
     if field == "targetSeconds":
@@ -330,7 +338,13 @@ def _stated(field: str, value) -> bool:
             return 5 <= float(value or 0) <= 7200
         except (TypeError, ValueError):
             return False
-    return len(str(value or "").strip()) >= 3
+    said = str(value or "").strip()
+    if len(said) < 3:
+        return False
+    # "Anyone", "whatever", "not needed" are refusals wearing the shape of an answer, and
+    # they then get fed into every prompt as though someone had decided something.
+    flat = re.sub(r"\s+", " ", said.lower())
+    return not any(flat.startswith(x) or flat == x for x in NON_ANSWERS)
 
 
 def do_clarify(body: dict) -> dict:
@@ -922,9 +936,15 @@ def do_write(body):
     # used to fall back to thirty seconds, which is how a request for twenty minutes
     # came back as a half-minute video and nothing in the system noticed.
     target = float(body.get("targetSeconds") or brief.get("targetSeconds") or 0)
-    if not 5 <= target <= 7200:
+    if not target:
         raise RuntimeError("Chưa biết video dài bao nhiêu. Hãy cho biết độ dài trước khi "
                            "lập kế hoạch — hệ thống không tự đoán thay bạn.")
+    if not 5 <= target <= 7200:
+        # Saying "we do not know the length" to someone who just said two hours is a lie
+        # that sends them looking for a bug in their own input.
+        raise RuntimeError("Độ dài %d giây nằm ngoài khoảng hệ thống dựng được: từ năm "
+                           "giây đến hai tiếng. Hãy chọn lại trong khoảng đó."
+                           % round(target))
     if not _stated("learners", brief.get("learners")):
         raise RuntimeError("Chưa biết video dành cho ai. Người học khác nhau thì cách viết "
                            "khác hẳn, nên hệ thống không tự đặt giúp.")
@@ -1041,7 +1061,8 @@ def do_write(body):
                 + validate.uncited_assertions(sentences)
                 + validate.overused_claims(sentences, len(usable))
                 + validate.narrated_sourcing(sentences)
-                + validate.slideshow(sentences))
+                + validate.slideshow(sentences)
+                + validate.citation_drift(sentences, claims))
     while problems and passes < 3 and len(calls) < RUN_BUDGET["n"]:
         passes += 1
         emit("caution", "T\u1ef1 ki\u1ec3m l\u01b0\u1ee3t %d: %d l\u1ed7i, vi\u1ebft l\u1ea1i" % (passes, len(problems)))
@@ -1050,7 +1071,8 @@ def do_write(body):
                     + validate.uncited_assertions(sentences)
                     + validate.overused_claims(sentences, len(usable))
                 + validate.narrated_sourcing(sentences)
-                + validate.slideshow(sentences))
+                + validate.slideshow(sentences)
+                + validate.citation_drift(sentences, claims))
 
     total = round(sum(s["dur"] for s in sentences), 1)
     if problems:
