@@ -1,0 +1,11 @@
+node_modules/
+*.log
+qa/shots/
+.env*
+.gstack/
+__pycache__/
+*.pyc
+out/
+verify-out/
+verify-render-mine/
+verify-render-out/
