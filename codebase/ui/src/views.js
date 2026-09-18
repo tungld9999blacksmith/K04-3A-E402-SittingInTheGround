@@ -307,6 +307,23 @@ window.View = (function () {
       "<dt>Thời lượng</dt><dd>" + esc(st.brief.duration) + "</dd></dl></div>";
   }
 
+  /* The reviewer's first question is always "did you make this up?", and until now the
+     answer was a URL printed as dead text. These build a real link, and where the browser
+     supports text fragments the link opens the page scrolled to the quoted words with
+     them highlighted — the claim checks itself in one click. */
+  function href(url) {
+    var u = String(url || "").trim();
+    if (!u) return "";
+    return /^https?:\/\//i.test(u) ? u : "https://" + u;
+  }
+
+  function quoteLink(url, hit) {
+    var base = href(url);
+    if (!base) return "";
+    var frag = String(hit || "").trim().replace(/[.,;:!?]+$/, "").slice(0, 120);
+    return frag ? base + "#:~:text=" + encodeURIComponent(frag) : base;
+  }
+
   function meter(trust) {
     var on = trust === "cao" ? 3 : trust === "trungbinh" ? 2 : 1;
     var cls = trust === "cao" ? "" : trust === "trungbinh" ? "mid" : "low";
@@ -375,7 +392,11 @@ window.View = (function () {
         h += '<div style="display:flex;flex-direction:column;gap:var(--s2)">' +
           '<div class="quote' + (usable ? "" : " mute") + '">' +
           esc(e.quote).replace(esc(e.hit), "<mark>" + esc(e.hit) + "</mark>") + "</div>" +
-          '<dl class="dl"><dt>Nguồn</dt><dd class="num">' + esc(e.src) + " · " + esc(src.title) + "</dd>" +
+          '<dl class="dl"><dt>Nguồn</dt><dd class="num">' + esc(e.src) + " · " +
+          '<a href="' + esc(quoteLink(src.url, e.hit)) + '" target="_blank" rel="noopener noreferrer">' +
+          esc(src.title) + "</a></dd>" +
+          '<dt>Kiểm lại</dt><dd><a href="' + esc(quoteLink(src.url, e.hit)) +
+          '" target="_blank" rel="noopener noreferrer">Mở trang gốc tại đúng câu trích</a></dd>' +
           "<dt>Ai viết</dt><dd>" + esc(src.org) + "</dd>" +
           '<dt>Đăng ngày</dt><dd class="num">' + esc(src.published) + "</dd>" +
           "<dt>Loại</dt><dd>" + esc(src.kind) + (src.lang === "en" ? ", tiếng Anh" : "") + "</dd>" +
@@ -520,7 +541,8 @@ window.View = (function () {
 
       h += '<div class="src' + (out ? " out" : "") + '">' +
         '<div class="row"><span class="t">' + esc(s.title) + "</span>" + pill + "</div>" +
-        '<span class="sub num">' + esc(id) + " · " + esc(s.org) + " · " + esc(s.url) + "</span>" +
+        '<span class="sub num">' + esc(id) + " · " + esc(s.org) + ' · <a href="' +
+        esc(href(s.url)) + '" target="_blank" rel="noopener noreferrer">' + esc(s.url) + "</a></span>" +
         '<div class="row"><span class="sub num">Đăng ' + esc(s.published) + " · " + esc(s.kind) +
         (s.lang === "en" ? " · tiếng Anh" : "") + "</span>" + meter(s.trust) + "</div>" +
         '<p class="sub" style="margin:0">' + esc(out && s.removedWhy ? s.removedWhy : s.why) + "</p>" +
